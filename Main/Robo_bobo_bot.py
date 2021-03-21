@@ -8,13 +8,12 @@ import irc.bot
 from pip._vendor import requests
 
 class TwitchBot(irc.bot.SingleServerIRCBot):
-    #class vars
-    death_counter = 0
-    death_filepath = "Main\death_counter.txt"
-
     def __init__(self, username, client_id, token, channel):
+        self.death_counter = 0
+        self.death_filepath = "Main\death_counter.txt"
         self.client_id = client_id
         self.token = token
+        self.refresh_token = 'y564u6bihjtfsvwwv09nud1dlgl66bq8dknosplj76efwdu503'
         self.channel = '#' + channel
 
         # Get the channel id, we will need this for v5 API calls
@@ -23,16 +22,22 @@ class TwitchBot(irc.bot.SingleServerIRCBot):
         r = requests.get(url, headers=headers).json()
         self.channel_id = r['users'][0]['_id']
 
-        #generate a token for itself (THIS IS RLY BAD CODE :-/)
-        #url = 'https://id.twitch.tv/oauth2/token' + '?client_id='+client_id+ '&client_secret='+"dig69r7rkevaa69tp6zl2a0sk7wae1"+'&grant_type='+'client_credentials'+'&scope='+'channel:edit:commercial'
-        url = 'https://id.twitch.tv/oauth2/token' + '?client_id='+client_id+ '&client_secret='+"dig69r7rkevaa69tp6zl2a0sk7wae1"+'&code=ybsqlir8kiwjii1o5x1nor0qtaagic'+'&grant_type=authorization_code'+ '&redirect_uri='+"http://localhost"
-        url = 'https://id.twitch.tv/oauth2/token' + '?client_id='+client_id+ '&client_secret='+"dig69r7rkevaa69tp6zl2a0sk7wae1"+'&code=lfcd6cwdgmc1438kdsbri6993jxga2'+'&grant_type=authorization_code'+ '&redirect_uri='+"http://localhost"
+        # #generate a token for itself (IDK if this is correct code flow)
+        # url = 'https://id.twitch.tv/oauth2/token' + '?client_id='+client_id+ '&client_secret='+"dig69r7rkevaa69tp6zl2a0sk7wae1"+'&code=kg37hwypnia3iabry9j3i5q4ywdk9w'+'&grant_type=authorization_code'+ '&redirect_uri='+"http://localhost"
+        # r = requests.post(url).json()
+        # print(r)
+        # if 'access_token' in r:
+        #     self.token = r['access_token']
+        #     self.refresh_token = r['refresh_token']
+        # else:
+            #if access_token not given, use the refresh token to get a new access token
+        url = 'https://id.twitch.tv/oauth2/token?grant_type=refresh_token&refresh_token=y564u6bihjtfsvwwv09nud1dlgl66bq8dknosplj76efwdu503&client_id='+client_id+'&client_secret='+'dig69r7rkevaa69tp6zl2a0sk7wae1'+'&scope=channel:edit:commercial'
         r = requests.post(url).json()
         print(r)
         if 'access_token' in r:
             self.token = r['access_token']
         else:
-            self.token = 'ezo6da1avvq36h3p5316ci0pyykwe4'
+            print('Refresh request failed')
 
         # Create IRC bot connection
         server = 'irc.chat.twitch.tv'
@@ -74,7 +79,8 @@ class TwitchBot(irc.bot.SingleServerIRCBot):
             print('Received command: ' + cmd)
             self.do_command(e, cmd, args, mod)
         return
-
+    #cmd is the first word after !, and args is the 2nd word afterwords (ex: !ad 30, cmd = 'ad', args = 30)
+    #mod is a bool on whether the one calling the command is a mod
     def do_command(self, e, cmd, args, mod):
         c = self.connection
 
@@ -127,7 +133,7 @@ class TwitchBot(irc.bot.SingleServerIRCBot):
         elif cmd == "ad":
             if mod:
                 if args != None: #if no length given, default to 60 sec
-                    length = int(args)
+                    length = round(int(args)%30)*30 #take given length (30,60,90, etc), mod-div by 30 then round to nearest number, then *30 to get multiple of 30 length
                 else:
                     length = 60
                 print('length = ', length)
@@ -137,9 +143,9 @@ class TwitchBot(irc.bot.SingleServerIRCBot):
                 r = requests.post(url, data=raw_data, headers=headers).json()
                 print(r)
                 if 'data' in r:
-                    c.privmsg(self.channel, 'Running a %d sec ad') %r['data'][0]['length']
+                    c.privmsg(self.channel, 'Running a %d sec ad') %length
                 else:
-                    print('Command Failed: ' + r)
+                    print(r)
             else:
                 c.privmsg(self.channel, 'This is a mod only command')
         #Bobo has no schedule
@@ -150,11 +156,22 @@ class TwitchBot(irc.bot.SingleServerIRCBot):
         elif cmd == 'F':
             c.privmsg(self.channel, 'Press F to pay respects BibleThump')
         #BOBO CAP
-        elif cmd == 'cap':
+        elif cmd == 'cap' or cmd == 'CAP':
             c.privmsg(self.channel, "That's CAP! 🧢🧢🧢")
         #BOBO IS GONE 🦀
         elif cmd == 'GONE':
             c.privmsg(self.channel, '🦀🦀🦀 BOBO IS GONE 🦀🦀🦀')
+        elif cmd == 'POG':
+            c.privmsg(self.channel, 'PogChamp PogChamp PogChamp PogChamp PogChamp PogChamp PogChamp PogChamp PogChamp PogChamp PogChamp PogChamp PogChamp PogChamp')
+        elif cmd == 'plague':
+            if args != None: #if no length given, default to 60 sec
+                length = 1
+            elif int(args) > 5:
+                length = 5
+            else:
+                length = int(args)
+            for x in range(0, length):
+                c.privmsg(self.channel, 'Plague of Egypt ResidentSleeper Plague of Egypt ResidentSleeper Plague of Egypt ResidentSleeper Plague of Egypt ResidentSleeper Plague of Egypt ResidentSleeper Plague of Egypt ResidentSleeper Plague of Egypt ResidentSleeper')
         # The command was not recognized
         else:
             print("Did not understand command: " + cmd)
