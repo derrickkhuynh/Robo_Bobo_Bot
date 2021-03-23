@@ -7,21 +7,17 @@ import sys
 import irc.bot
 from pip._vendor import requests
 
-class TwitchBot(irc.bot.SingleServerIRCBot):
-    def __init__(self, username, client_id, token, channel):
+class RoboBoboBot(irc.bot.SingleServerIRCBot):
+    def __init__(self, channel):
+        self.username = 'robo_bobo_bot'
         self.death_counter = 0
         self.death_filepath = "Main\death_counter.txt"
-        self.client_id = client_id
-        self.token = token
+        self.client_id = '5xujdtajog1xaihkd3cvzhyk7f52d8'
+        #self.token = token
         self.refresh_token = 'y564u6bihjtfsvwwv09nud1dlgl66bq8dknosplj76efwdu503'
         self.channel = '#' + channel
 
-        # Get the channel id, we will need this for v5 API calls
-        url = 'https://api.twitch.tv/kraken/users?login=' + channel
-        headers = {'Client-ID': client_id, 'Accept': 'application/vnd.twitchtv.v5+json'}
-        r = requests.get(url, headers=headers).json()
-        self.channel_id = r['users'][0]['_id']
-
+        ## Maybe one day create a frontend and allow for seamless authentication? But i'm not a CS major lol
         # #generate a token for itself (IDK if this is correct code flow)
         # url = 'https://id.twitch.tv/oauth2/token' + '?client_id='+client_id+ '&client_secret='+"dig69r7rkevaa69tp6zl2a0sk7wae1"+'&code=kg37hwypnia3iabry9j3i5q4ywdk9w'+'&grant_type=authorization_code'+ '&redirect_uri='+"http://localhost"
         # r = requests.post(url).json()
@@ -31,7 +27,7 @@ class TwitchBot(irc.bot.SingleServerIRCBot):
         #     self.refresh_token = r['refresh_token']
         # else:
             #if access_token not given, use the refresh token to get a new access token
-        url = 'https://id.twitch.tv/oauth2/token?grant_type=refresh_token&refresh_token=y564u6bihjtfsvwwv09nud1dlgl66bq8dknosplj76efwdu503&client_id='+client_id+'&client_secret='+'dig69r7rkevaa69tp6zl2a0sk7wae1'+'&scope=channel:edit:commercial'
+        url = 'https://id.twitch.tv/oauth2/token?grant_type=refresh_token&refresh_token=y564u6bihjtfsvwwv09nud1dlgl66bq8dknosplj76efwdu503&client_id='+self.client_id+'&client_secret='+'dig69r7rkevaa69tp6zl2a0sk7wae1'+'&scope=channel:edit:commercial'
         r = requests.post(url).json()
         print(r)
         if 'access_token' in r:
@@ -39,11 +35,17 @@ class TwitchBot(irc.bot.SingleServerIRCBot):
         else:
             print('Refresh request failed')
 
+        # Get the channel id for API calls
+        url = 'https://api.twitch.tv/helix/search/channels?query=' + channel
+        headers = {'Client-Id': self.client_id, 'Authorization': 'Bearer ' + self.token}
+        r = requests.get(url, headers=headers).json()
+        self.channel_id = r['data'][0]['id']
+
         # Create IRC bot connection
         server = 'irc.chat.twitch.tv'
         port = 6667
         print('Connecting to ' + server + ' on port ' + str(port) + '...')
-        irc.bot.SingleServerIRCBot.__init__(self, [(server, port, 'oauth:'+token)], username, username)
+        irc.bot.SingleServerIRCBot.__init__(self, [(server, port, 'oauth:'+'a8g76acsbnp40qcseo9ekxloa233bm')], self.username, self.username)
         
     def on_welcome(self, c, e):
         print('Joining ' + self.channel)
@@ -134,6 +136,8 @@ class TwitchBot(irc.bot.SingleServerIRCBot):
             if mod:
                 if args != None: #if no length given, default to 60 sec
                     length = round(int(args)%30)*30 #take given length (30,60,90, etc), mod-div by 30 then round to nearest number, then *30 to get multiple of 30 length
+                    if length > 180: #if length is greater than max length (3 mins), then set to 3 mins
+                        length = 180
                 else:
                     length = 60
                 print('length = ', length)
@@ -170,7 +174,7 @@ class TwitchBot(irc.bot.SingleServerIRCBot):
                 length = 5
             else:
                 length = int(args)
-            for x in range(0, length):
+            for _ in range(0, length):
                 c.privmsg(self.channel, 'Plague of Egypt ResidentSleeper Plague of Egypt ResidentSleeper Plague of Egypt ResidentSleeper Plague of Egypt ResidentSleeper Plague of Egypt ResidentSleeper Plague of Egypt ResidentSleeper Plague of Egypt ResidentSleeper')
         # The command was not recognized
         else:
@@ -181,17 +185,14 @@ def main():
         print("Usage: twitchbot <username> <client id> <token> <channel>")
         sys.exit(1)
 
-    username  = sys.argv[1]
-    client_id = sys.argv[2]
-    token     = sys.argv[3]
-    channel   = sys.argv[4]
+    channel   = sys.argv[1]
 
     # username = "Robo_bobo_bot"
     # client_id = "5xujdtajog1xaihkd3cvzhyk7f52d8"
     # token = "oauth:rizwucwbkmr1m0lezs30koikliswa7"
     # channel = "xrohantv"
 
-    bot = TwitchBot(username, client_id, token, channel)
+    bot = RoboBoboBot(channel)
     bot.start()
 
 if __name__ == "__main__":
