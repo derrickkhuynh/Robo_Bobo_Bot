@@ -196,7 +196,6 @@ class RoboBoboBot(irc.bot.SingleServerIRCBot):
         #Youtube Playlist Queue
         elif cmd.lower() == 'songs':
             if args[0] == 'play' or args[0] == 'request' or args[0] == 'queue':
-                print('Wait a bit lol')
                 song_name = ""
                 if len(args) > 2: #searching for song name
                     search_term = ""
@@ -207,12 +206,12 @@ class RoboBoboBot(irc.bot.SingleServerIRCBot):
                     #check if it's a link, then parse the id from it
                     url_data = urlparse.urlparse(args[1])
                     query = urlparse.parse_qs(url_data.query)
-                    if query["v"] != None:
+                    if 'v' in query:
                         video_id = query["v"][0]
                         print('Video ID = ' + video_id)
                         song_name = self.queueSong(video_id)
                     else: #if it was not a link, search for the term (YT will return first search result - Searching ID works)
-                        self.searchSong(search_term)
+                        song_name = self.searchSong(args[1])
                 message = 'Queued: ' + song_name
                 c.privmsg(self.channel, message)
         
