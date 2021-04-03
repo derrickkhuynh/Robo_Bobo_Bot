@@ -69,7 +69,7 @@ class RoboBoboBot(irc.bot.SingleServerIRCBot):
         response = request.execute()  #request top result from youtube
         req_song_id = response['items'][0]['id']['videoId']
         return self.queueSong(req_song_id)
-        
+
     #TODO: ADD Duration counter to track current position in the playlist
     #given the requested song's id, add it to the end of the playlist
     def queueSong(self, request_song_id):
@@ -81,7 +81,7 @@ class RoboBoboBot(irc.bot.SingleServerIRCBot):
         body={
           "snippet": {
             "playlistId": "PLpKWYssZZaRkwTiqBCEytDUNySoREGTPf",
-            "position": 100,
+            "position": 100, #arbitrarily set position to 100 to add to end of playlist
             "resourceId": {
               "kind": "youtube#video",
               "videoId": request_song_id
@@ -102,14 +102,6 @@ class RoboBoboBot(irc.bot.SingleServerIRCBot):
         c.cap('REQ', ':twitch.tv/commands')
         c.join(self.channel)
 
-        #update death_counter from external file
-        # f = open(self.death_filepath,'a+')
-        # self.death_counter = f.read()
-        # if(os.stat(self.death_filepath).st_size == 0):
-        #     self.death_counter = 0
-        #     f.write('%d' %self.death_counter)
-        #     f.close()
-
     def on_pubmsg(self, c, e):
         mod = False
         # If a chat message starts with an exclamation point, try to run it as a command
@@ -129,6 +121,7 @@ class RoboBoboBot(irc.bot.SingleServerIRCBot):
                 print('With args: ' + args[0])
             self.do_command(e, cmd, args, mod)
         return
+
     #cmd is the first word after !, and args is the 2nd word afterwords (ex: !ad 30, cmd = 'ad', args = 30)
     #mod is a bool on whether the one calling the command is a mod
     def do_command(self, e, cmd, args, mod):
@@ -178,10 +171,7 @@ class RoboBoboBot(irc.bot.SingleServerIRCBot):
             elif args[0] == 'reset':
                     self.death_counter = 0
                     c.privmsg(self.channel, 'Death counter reset')
-            #update the external txt file with current death counter
-            # f = open(self.death_filepath,'w')
-            # f.write(self.death_counter)
-            # f.close()
+
         #run an ad
         elif cmd == "ad":
             if mod:
@@ -217,9 +207,12 @@ class RoboBoboBot(irc.bot.SingleServerIRCBot):
                     #check if it's a link, then parse the id from it
                     url_data = urlparse.urlparse(args[1])
                     query = urlparse.parse_qs(url_data.query)
-                    video_id = query["v"][0]
-                    print('Video ID = ' + video_id)
-                    song_name = self.queueSong(video_id)
+                    if query["v"] != None:
+                        video_id = query["v"][0]
+                        print('Video ID = ' + video_id)
+                        song_name = self.queueSong(video_id)
+                    else: #if it was not a link, search for the term (YT will return first search result - Searching ID works)
+                        self.searchSong(search_term)
                 message = 'Queued: ' + song_name
                 c.privmsg(self.channel, message)
         
@@ -279,11 +272,6 @@ def main():
         sys.exit(1)
 
     channel   = sys.argv[1]
-
-    # username = "Robo_bobo_bot"
-    # client_id = "5xujdtajog1xaihkd3cvzhyk7f52d8"
-    # token = "oauth:rizwucwbkmr1m0lezs30koikliswa7"
-    # channel = "xrohantv"
 
     bot = RoboBoboBot(channel)
     bot.start()
