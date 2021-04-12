@@ -1,8 +1,15 @@
 #Robo_bobo_bot
+#TODO: Implement giveaway cmd
+# !giveaway start <Giveaway Name/Item> , then chatters can join by doing !giveaway join
+# code then adds their username to an array/dict (maybe use a key and value to track entries)
+# !giveaway end -> randn generated btwn 0 and len(array/dict), user is then chosen (filter out mods, rohan, etc)
+# allow for channel points to request a song
 
 import os
 import sys
 from dotenv import load_dotenv
+
+import random
 #twitch bot imports
 import irc.bot
 from pip._vendor import requests
@@ -20,18 +27,25 @@ import googleapiclient.errors
 yt_scopes = ["https://www.googleapis.com/auth/youtube.force-ssl"]
 
 class RoboBoboBot(irc.bot.SingleServerIRCBot):
-    def __init__(self, channel):
+    def __init__(self):
         #load env stuff
         load_dotenv()
         self.username = 'robo_bobo_bot'
         self.death_counter = 0
         #self.death_filepath = "Main\death_counter.txt"
         self.client_id = os.getenv('TWITCH_CLIENT_ID')
-        self.channel = '#' + channel
+        self.channel_id = os.getenv('XROHANTV_ID')
+        self.channel = '#xrohantv'
 
         self.start_time = None
-        #Current Song Info
-        self.curr_song = ""
+
+        #giveaway trackers
+        self.giveaway_entries = []
+        self.giveaway_on = False
+
+        #list of songs in the playlist
+        self.song_names = []
+        self.song_ids = []
 
         # Youtube Authentication
         client_secrets_file = "Main\client_id.json"
@@ -39,7 +53,7 @@ class RoboBoboBot(irc.bot.SingleServerIRCBot):
         self.credentials = flow.run_console()
 
         #use the refresh token from .env to request a new access token
-        url = 'https://id.twitch.tv/oauth2/token?grant_type=refresh_token&refresh_token='+os.getenv('REFRESH_TOKEN')+'&client_id='+self.client_id+'&client_secret='+os.getenv('TWITCH_CLIENT_SECRET')+'&scope=channel:edit:commercial'
+        url = 'https://id.twitch.tv/oauth2/token?grant_type=refresh_token&refresh_token='+os.getenv('TW_REFRESH_TOKEN')+'&client_id='+self.client_id+'&client_secret='+os.getenv('TWITCH_CLIENT_SECRET')+'&scope=channel:edit:commercial'
         r = requests.post(url).json()
         if 'access_token' in r:
             self.token = r['access_token']
@@ -47,12 +61,6 @@ class RoboBoboBot(irc.bot.SingleServerIRCBot):
         else: #if failed, exit
             print('Refresh request failed')
             exit()
-
-        # Get the channel id for API calls
-        url = 'https://api.twitch.tv/helix/search/channels?query=' + channel
-        headers = {'Client-Id': self.client_id, 'Authorization': 'Bearer ' + self.token}
-        r = requests.get(url, headers=headers).json()
-        self.channel_id = r['data'][0]['id']
 
         # Create IRC bot connection
         server = 'irc.chat.twitch.tv'
@@ -68,10 +76,10 @@ class RoboBoboBot(irc.bot.SingleServerIRCBot):
         request = youtube.search().list(part="snippet", maxResults=1, q=search_term)
         response = request.execute()  #request top result from youtube
         req_song_id = response['items'][0]['id']['videoId']
-        return self.queueSong(req_song_id)
+        song_name = response['items'][0]['snippet']['title']
+        return song_name, req_song_id
 
     #TODO: ADD Duration counter to track current position in the playlist
-    #given the requested song's id, add it to the end of the playlist
     def queueSong(self, request_song_id):
         api_service_name = "youtube"
         api_version = "v3"
@@ -92,6 +100,35 @@ class RoboBoboBot(irc.bot.SingleServerIRCBot):
         song_name = response['snippet']['title']
         print('Queueing song: ' + song_name)
         return song_name
+    
+    def updateSongList(self):
+        api_service_name = "youtube"
+        api_version = "v3"
+        youtube = googleapiclient.discovery.build(api_service_name, api_version, credentials=self.credentials)
+        request = youtube.playlistItems().list(
+        part="snippet",
+        maxResults=50,
+        playlistId="PLpKWYssZZaRkwTiqBCEytDUNySoREGTPf"
+        )
+
+        response = request.execute()
+
+        #delete any previous info (may be outdated)
+        self.song_ids = []
+        self.song_names = []
+        for x in range(0, len(response['items'])): 
+            self.song_ids.append(response['items'][x]['id'])
+            self.song_names.append(response['items'][x]['snippet']['title'])
+    
+    def deleteSong(self, del_song_id):
+        api_service_name = "youtube"
+        api_version = "v3"
+        youtube = googleapiclient.discovery.build(api_service_name, api_version, credentials=self.credentials)
+        request = youtube.playlistItems().delete(
+        id = del_song_id
+        )
+
+        request.execute()
         
     def on_welcome(self, c, e):
         print('Joining ' + self.channel)
@@ -115,25 +152,26 @@ class RoboBoboBot(irc.bot.SingleServerIRCBot):
             for _, value in e.tags[-1].items():
                 if value == 'mod':
                     mod = True
-                    print('User is a mod')
-            print('Received command: ' + cmd)
             if args != None:
-                print('With args: ' + args[0])
-            self.do_command(e, cmd, args, mod)
+                print('Received command: ' + cmd + args[0])
+            else:
+                print('Received command: ' + cmd)
+            #get chatter's name
+            name = e.source.split('!')[0]
+            cmd = cmd.lower()
+            self.do_command(e, cmd, args, mod, name)
         return
 
     #cmd is the first word after !, and args is the 2nd word afterwords (ex: !ad 30, cmd = 'ad', args = 30)
     #mod is a bool on whether the one calling the command is a mod
-    def do_command(self, e, cmd, args, mod):
+    def do_command(self, e, cmd, args, mod, name):
         c = self.connection
         # Poll the API to get current game.
         if cmd == "game":
             url = 'https://api.twitch.tv/helix/channels?broadcaster_id=' + self.channel_id
             headers = {'Client-ID': self.client_id, 'Authorization': 'Bearer ' + self.token}
             r = requests.get(url, headers=headers).json()
-            print(r)
             r = r['data'][0]
-            print(r)
             c.privmsg(self.channel, r["broadcaster_name"] + ' is currently playing ' + r['game_name'])
 
         # Poll the API the get the current status of the stream
@@ -145,7 +183,7 @@ class RoboBoboBot(irc.bot.SingleServerIRCBot):
             c.privmsg(self.channel, r['broadcaster_name'] + ' channel title is currently ' + r['title'])
 
         #death counter commands
-        elif cmd == "deaths":
+        elif cmd == "deaths" or cmd == 'death':
             if args == None:
                 message = "Rohan has died %d times. What a loser!" %int(self.death_counter)
                 c.privmsg(self.channel, message)
@@ -175,80 +213,142 @@ class RoboBoboBot(irc.bot.SingleServerIRCBot):
         #run an ad
         elif cmd == "ad":
             if mod:
-                if args != None: #if no length given, default to 60 sec
-                    length = round(int(args[0])%30)*30 #take given length (30,60,90, etc), mod-div by 30 then round to nearest number, then *30 to get multiple of 30 length
+                if args != None: #round their given length
+                    length = round(int(args[0])/30)*30 #div by 30 then round to nearest number, then *30 to get multiple of 30 length
                     if length > 180: #if length is greater than max length (3 mins), then set to 3 mins
                         length = 180
-                else:
+                else:  #if no length given, default to 60 sec
                     length = 60
-                print('length = ', length)
                 url = 'https://api.twitch.tv/helix/channels/commercial' 
                 headers = {'Client-Id': self.client_id, 'Content-Type': 'application/json',  'Authorization': 'Bearer ' + self.token}
                 raw_data = '{ "broadcaster_id": "%s", "length": %d }' %(self.channel_id, length)
                 r = requests.post(url, data=raw_data, headers=headers).json()
                 print(r)
-                if 'data' in r:
-                    c.privmsg(self.channel, 'Running a %d sec ad') %length
-                else:
-                    print(r)
+                if 'data' in r: #if succeeded, print in the chat
+                    c.privmsg(self.channel, 'Running a %d sec ad' %length) 
             else:
                 c.privmsg(self.channel, 'This is a mod only command')
+
         #Youtube Playlist Queue
-        elif cmd.lower() == 'songs':
-            if args[0] == 'play' or args[0] == 'request' or args[0] == 'queue':
+        elif cmd == 'songs' or cmd == 'song':
+            if args == None: #check for empty request: !songs to provide the link
+                c.privmsg(self.channel, 'Listen along at https://www.youtube.com/playlist?list=PLpKWYssZZaRkwTiqBCEytDUNySoREGTPf')
+            elif args[0] == 'play' or args[0] == 'request' or args[0] == 'queue':
                 song_name = ""
                 if len(args) > 2: #searching for song name
                     search_term = ""
                     for i in range(1, len(args)):
-                        search_term = search_term + args[i] + ' ' #append the search term to the end
-                    song_name = self.searchSong(search_term)
+                        search_term = search_term + args[i] + ' ' #combine split terms by appending the search term to the end
+                    _, video_id = self.searchSong(search_term)
+                    song_name = self.queueSong(video_id)
+                elif len(args) == 1: #check for !songs play/request/queue without search term
+                    c.privmsg(self.channel, "Please provide valid youtube link or song name")
                 else: #either has a link, song_id, or a single term search phrase
-                    #check if it's a link, then parse the id from it
-                    url_data = urlparse.urlparse(args[1])
-                    query = urlparse.parse_qs(url_data.query)
-                    if 'v' in query:
+                    url_data = urlparse.urlparse(args[1]) #check if it's a link, then parse the id from it
+                    if url_data[1] == 'www.youtube.com':
+                        query = urlparse.parse_qs(url_data.query)
                         video_id = query["v"][0]
                         print('Video ID = ' + video_id)
                         song_name = self.queueSong(video_id)
+                    elif url_data[1] == 'youtu.be':
+                        video_id = url_data[1][1:]
+                        print('Video ID = ' + video_id)
+                        song_name = self.queueSong(video_id)
                     else: #if it was not a link, search for the term (YT will return first search result - Searching ID works)
-                        song_name = self.searchSong(args[1])
+                        _, video_id = self.searchSong(args[1])
+                        song_name = self.queueSong(video_id)
                 message = 'Queued: ' + song_name
                 c.privmsg(self.channel, message)
-        
+                self.updateSongList()
+            elif args[0] == 'list' or args[0] == 'link': 
+                # message = "The current song list is:"
+                # self.updateSongList()
+                # for i in range(0, len(self.song_names)):
+                #     message = message + str(i+1) + '. ' + self.song_names[i]
+                # c.privmsg(self.channel, message)
+                c.privmsg(self.channel, 'You can find the playlist at: https://www.youtube.com/playlist?list=PLpKWYssZZaRkwTiqBCEytDUNySoREGTPf')
+            elif args[0] == 'delete': #params: position, deletes the song at pos
+                if mod:
+                    search_term = ""
+                    self.updateSongList()                           #get an updated list of songs
+                    for i in range(1, len(args)): #concatenate search term
+                        search_term = search_term + args[i] + ' '
+                    del_song_name, _ = self.searchSong(search_term) #get the name of the video through search
+                    print('Trying to delete: ' + del_song_name)
+                    print(self.song_names)
+                    try: #if the song is in the list (no error caught), then delete it
+                        index = self.song_names.index(del_song_name)    #find the name inside the list of song_names and its index
+                        del_song_id = self.song_ids[index]              #find the playlist item ID using the index ^
+                        self.deleteSong(del_song_id)                    #delete the song using a delete request
+                        c.privmsg(self.channel, 'Deleted: ' + del_song_name)
+                    except:
+                        c.privmsg(self.channel, 'Could not delete the video - Video not found')
+                        return                                      
+
+        #Raffle or Giveaway system
+        elif cmd == 'raffle' or cmd == 'giveaway':
+            #TODO: Implement channel points/bits to increase chances
+            if args == None:
+                if self.giveaway_on and not(name in self.giveaway_entries): #if a giveaway is running, and they are already not already entered
+                    self.giveaway_entries.append(name) #add that name to an array
+            elif args[0] == 'start' or args[0] == 'begin':
+                if mod and self.giveaway_on == False:
+                    self.giveaway_on = True
+                    self.giveaway_entries = []
+                    c.privmsg(self.channel, 'The giveaway has started! Type !raffle to enter')
+            elif args[0] == 'end':
+                if mod and self.giveaway_on:
+                    print(self.giveaway_entries)
+                    winner = random.randint(0, len(self.giveaway_entries) - 1)
+                    c.privmsg(self.channel, 'The winner is: ' + self.giveaway_entries[winner] + "! Congratulations")
+                    self.giveaway_on = False
+                    self.giveaway_entries = []
+            
         #plug discord server
-        elif cmd.lower() == 'discord' or cmd.lower() == 'socials':
+        elif cmd == 'discord' or cmd == 'socials':
             c.privmsg(self.channel, 'Join the xRohanTV community discord at: https://discord.gg/Za5ngC9QsE')
 
         #find current uptime
-        elif cmd.lower() == 'uptime':
-            if self.start_time == None:
-                url = 'https://api.twitch.tv/helix/search/channels?query=' + self.channel[1:] #truncate the initial # from self.channel
-                headers = {'Client-Id': self.client_id, 'Authorization': 'Bearer ' + self.token}
-                r = requests.get(url, headers=headers).json()
-                if r['data'][0].has('started_at'):
-                    self.start_time = parser.parse(r['data'][0]['started_at'])
-                else:
-                    print('Channel is not live')
-            else:
+        elif cmd == 'uptime':
+            url = 'https://api.twitch.tv/helix/search/channels?query=xrohantv'
+            headers = {'Client-Id': self.client_id, 'Authorization': 'Bearer ' + self.token}
+            r = requests.get(url, headers=headers).json()
+            index = -1
+            for i in range(0, len(r['data']) - 1):
+                if r['data'][i]['broadcaster_login'] == 'xrohantv':
+                    index = i
+                    break
+            if r['data'][index]['started_at'] != "" and index != -1: #check if started at is empty (Rohan isn't streaming), if index = -1, then it couldn't find xRohanTV
+                self.start_time = parser.parse(r['data'][index]['started_at'])
                 current_time = datetime.now(tz.UTC)
-                time_difference = current_time - self.start_time
-                print(time_difference)
+                time_difference = str(current_time - self.start_time).split(':')
+                hours = time_difference[0]
+                minutes = time_difference[1]
+                seconds = time_difference[2][0:2]
+                c.privmsg(self.channel, "Rohan's been streaming for " + hours + ' hours, ' + minutes + ' minutes, and ' + seconds + ' seconds.')
+            else:
+                print('Channel is not live')
+
         # Simple Bot Commands #
         elif cmd == 'F':
             c.privmsg(self.channel, 'Press F to pay respects BibleThump')
         elif cmd == "schedule":           
             c.privmsg(self.channel, "Hah! You think Rohan has an actual streaming schedule?")
-        elif cmd.lower() == 'cap':
+        elif cmd == 'cap':
             c.privmsg(self.channel, "That's CAP! 🧢🧢🧢")
-        elif cmd.lower() == 'gone':
+        elif cmd == 'gone':
             c.privmsg(self.channel, '🦀🦀🦀 ROHAN IS GONE 🦀🦀🦀')
-        elif cmd.lower() == 'pog':
+        elif cmd == 'pog':
             c.privmsg(self.channel, 'PogChamp PogChamp PogChamp PogChamp PogChamp PogChamp PogChamp PogChamp PogChamp PogChamp PogChamp PogChamp PogChamp PogChamp')
-        elif cmd.lower() == 'cheese':
+        elif cmd == 'cheese':
             c.privmsg(self.channel, '🧀🧀🧀 THATS SOME CHEESE🧀🧀🧀')
-        elif cmd.lower() == 'defeat':
+        elif cmd == 'defeat':
             c.privmsg(self.channel, 'Remember Rohan, Hesitation is Defeat')
-        elif cmd.lower() == 'plague':
+        elif cmd == 'djkhaled' or cmd == 'khaled':
+            c.privmsg(self.channel, 'As DJ Khaled famously said, "ONE MORE"')
+        elif cmd == 'robert':
+            c.privmsg(self.channel, "ROBERTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT!!!!!!!!!!!!!!!!!!")
+        elif cmd == 'plague':
             if args == None: #if no length given, default to 60 sec
                 length = 1
             elif int(args[0]) > 5:
@@ -266,13 +366,7 @@ class RoboBoboBot(irc.bot.SingleServerIRCBot):
             print("Did not understand command: " + cmd)
 
 def main():
-    if len(sys.argv) != 2:
-        print("Usage: Robo_bobo_bot <channel>")
-        sys.exit(1)
-
-    channel   = sys.argv[1]
-
-    bot = RoboBoboBot(channel)
+    bot = RoboBoboBot()
     bot.start()
 
 if __name__ == "__main__":
