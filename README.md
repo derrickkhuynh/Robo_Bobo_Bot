@@ -1,5 +1,6 @@
 # Robo_Bobo_Bot
  Private Repo for Rohan and friends
+ 
  Made by Derrick Huynh
 
 # Usage:
@@ -8,8 +9,4 @@ Install irc.bot, (may need installing irc by itself), and requests using
 pip install irc.bot / pip install requests
 
 After having all modules installed,
-run the file as following:
-
-'File path' 'channel name'
-
-(ex: & 'c:\Users\Derrick Huynh\Documents\Robo_Bobo\Main\Robo_bobo_bot.py' xrohantv)
+run the file through the IDE. 
