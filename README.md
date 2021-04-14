@@ -1,7 +1,10 @@
 # Robo_Bobo_Bot
- Private Repo for Rohan and friends
+A custom chatbot for the xRohanTV Twitch Stream!
+https://www.twitch.tv/xrohantv
+
  
- Made by Derrick Huynh
+Made by Derrick Huynh
+UCLA co'22
 
 # Usage:
 With python installed on your pc on an IDE (I use Visual Studio Code with the python addon)
