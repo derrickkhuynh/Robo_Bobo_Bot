@@ -30,6 +30,6 @@ Key Features:
 
 !coin   - Flips a coin
 
-!dice <sides> - tosses a <sides>-sided die
+!dice n - tosses a n-sided die (default n = 6)
  
 and much more!
