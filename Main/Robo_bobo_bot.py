@@ -1,8 +1,6 @@
 #Robo_bobo_bot
 #TODO: Implement giveaway cmd
-# !giveaway start <Giveaway Name/Item> , then chatters can join by doing !giveaway join
-# code then adds their username to an array/dict (maybe use a key and value to track entries)
-# !giveaway end -> randn generated btwn 0 and len(array/dict), user is then chosen (filter out mods, rohan, etc)
+# !topbits
 # allow for channel points to request a song
 
 import os
@@ -46,6 +44,7 @@ class RoboBoboBot(irc.bot.SingleServerIRCBot):
         #list of songs in the playlist
         self.song_names = []
         self.song_ids = []
+        self.banned_songs = []
 
         # Youtube Authentication
         client_secrets_file = "Main\client_id.json"
@@ -75,27 +74,26 @@ class RoboBoboBot(irc.bot.SingleServerIRCBot):
         youtube = googleapiclient.discovery.build(api_service_name, api_version, credentials=self.credentials)
         request = youtube.search().list(part="snippet", maxResults=1, q=search_term)
         response = request.execute()  #request top result from youtube
-        req_song_id = response['items'][0]['id']['videoId']
-        song_name = response['items'][0]['snippet']['title']
+        try:
+            req_song_id = response['items'][0]['id']['videoId']
+            song_name = response['items'][0]['snippet']['title'] 
+        except:
+            req_song_id = None
+            song_name = None
         return song_name, req_song_id
 
-    #TODO: ADD Duration counter to track current position in the playlist
     def queueSong(self, request_song_id):
         api_service_name = "youtube"
         api_version = "v3"
         youtube = googleapiclient.discovery.build(api_service_name, api_version, credentials=self.credentials)
-        request = youtube.playlistItems().insert(
-        part="snippet",
-        body={
-          "snippet": {
+        request = youtube.playlistItems().insert(part="snippet", body={"snippet": {
             "playlistId": "PLpKWYssZZaRkwTiqBCEytDUNySoREGTPf",
             "position": 100, #arbitrarily set position to 100 to add to end of playlist
             "resourceId": {
               "kind": "youtube#video",
               "videoId": request_song_id
             }
-          }
-        })
+          }})
         response = request.execute()
         song_name = response['snippet']['title']
         print('Queueing song: ' + song_name)
@@ -105,12 +103,7 @@ class RoboBoboBot(irc.bot.SingleServerIRCBot):
         api_service_name = "youtube"
         api_version = "v3"
         youtube = googleapiclient.discovery.build(api_service_name, api_version, credentials=self.credentials)
-        request = youtube.playlistItems().list(
-        part="snippet",
-        maxResults=50,
-        playlistId="PLpKWYssZZaRkwTiqBCEytDUNySoREGTPf"
-        )
-
+        request = youtube.playlistItems().list(part="snippet", maxResults=50, playlistId="PLpKWYssZZaRkwTiqBCEytDUNySoREGTPf")
         response = request.execute()
 
         #delete any previous info (may be outdated)
@@ -124,10 +117,7 @@ class RoboBoboBot(irc.bot.SingleServerIRCBot):
         api_service_name = "youtube"
         api_version = "v3"
         youtube = googleapiclient.discovery.build(api_service_name, api_version, credentials=self.credentials)
-        request = youtube.playlistItems().delete(
-        id = del_song_id
-        )
-
+        request = youtube.playlistItems().delete(id = del_song_id)
         request.execute()
         
     def on_welcome(self, c, e):
@@ -153,11 +143,13 @@ class RoboBoboBot(irc.bot.SingleServerIRCBot):
                 if value == 'mod':
                     mod = True
             if args != None:
-                print('Received command: ' + cmd + args[0])
+                print('Received command: ' + cmd + ' ' + args[0])
             else:
                 print('Received command: ' + cmd)
             #get chatter's name
             name = e.source.split('!')[0]
+            if name == 'xrohantv': #rohan is a mod right?
+                mod = True
             cmd = cmd.lower()
             self.do_command(e, cmd, args, mod, name)
         return
@@ -231,7 +223,7 @@ class RoboBoboBot(irc.bot.SingleServerIRCBot):
 
         #Youtube Playlist Queue
         elif cmd == 'songs' or cmd == 'song':
-            if args == None: #check for empty request: !songs to provide the link
+            if args == None or args[0] == 'link' or args[0] == 'playlist': #check for empty request: !songs to provide the link
                 c.privmsg(self.channel, 'Listen along at https://www.youtube.com/playlist?list=PLpKWYssZZaRkwTiqBCEytDUNySoREGTPf')
             elif args[0] == 'play' or args[0] == 'request' or args[0] == 'queue':
                 song_name = ""
@@ -239,8 +231,7 @@ class RoboBoboBot(irc.bot.SingleServerIRCBot):
                     search_term = ""
                     for i in range(1, len(args)):
                         search_term = search_term + args[i] + ' ' #combine split terms by appending the search term to the end
-                    _, video_id = self.searchSong(search_term)
-                    song_name = self.queueSong(video_id)
+                    req_song_name, video_id = self.searchSong(search_term)
                 elif len(args) == 1: #check for !songs play/request/queue without search term
                     c.privmsg(self.channel, "Please provide valid youtube link or song name")
                 else: #either has a link, song_id, or a single term search phrase
@@ -249,24 +240,25 @@ class RoboBoboBot(irc.bot.SingleServerIRCBot):
                         query = urlparse.parse_qs(url_data.query)
                         video_id = query["v"][0]
                         print('Video ID = ' + video_id)
-                        song_name = self.queueSong(video_id)
+                        req_song_name, video_id = self.searchSong(video_id) #searching the song id returns it on top result
                     elif url_data[1] == 'youtu.be':
                         video_id = url_data[1][1:]
                         print('Video ID = ' + video_id)
-                        song_name = self.queueSong(video_id)
+                        req_song_name, video_id = self.searchSong(video_id)
                     else: #if it was not a link, search for the term (YT will return first search result - Searching ID works)
-                        _, video_id = self.searchSong(args[1])
-                        song_name = self.queueSong(video_id)
-                message = 'Queued: ' + song_name
-                c.privmsg(self.channel, message)
+                        req_song_name, video_id = self.searchSong(args[1])
                 self.updateSongList()
-            elif args[0] == 'list' or args[0] == 'link': 
-                # message = "The current song list is:"
-                # self.updateSongList()
-                # for i in range(0, len(self.song_names)):
-                #     message = message + str(i+1) + '. ' + self.song_names[i]
-                # c.privmsg(self.channel, message)
-                c.privmsg(self.channel, 'You can find the playlist at: https://www.youtube.com/playlist?list=PLpKWYssZZaRkwTiqBCEytDUNySoREGTPf')
+                if req_song_name in self.song_names: #if song is already inside the playlist
+                    c.privmsg(self.channel, 'Song is already in the playlist')
+                    return
+                elif req_song_name in self.banned_songs:
+                    c.privmsg(self.channel, 'Song is banned lol :p')
+                    return
+                else:
+                    song_name = self.queueSong(video_id)
+                    message = 'Queued: ' + song_name
+                    c.privmsg(self.channel, message)
+                    self.updateSongList()
             elif args[0] == 'delete': #params: position, deletes the song at pos
                 if mod:
                     search_term = ""
@@ -275,7 +267,6 @@ class RoboBoboBot(irc.bot.SingleServerIRCBot):
                         search_term = search_term + args[i] + ' '
                     del_song_name, _ = self.searchSong(search_term) #get the name of the video through search
                     print('Trying to delete: ' + del_song_name)
-                    print(self.song_names)
                     try: #if the song is in the list (no error caught), then delete it
                         index = self.song_names.index(del_song_name)    #find the name inside the list of song_names and its index
                         del_song_id = self.song_ids[index]              #find the playlist item ID using the index ^
@@ -283,7 +274,21 @@ class RoboBoboBot(irc.bot.SingleServerIRCBot):
                         c.privmsg(self.channel, 'Deleted: ' + del_song_name)
                     except:
                         c.privmsg(self.channel, 'Could not delete the video - Video not found')
-                        return                                      
+                        return
+            elif args[0] == 'ban':      
+                if mod:
+                    search_term = ""
+                    self.updateSongList()                           #get an updated list of songs
+                    for i in range(1, len(args)):                   #concatenate search term
+                        search_term = search_term + args[i] + ' '
+                    ban_song_name, _ = self.searchSong(search_term) #get the name of the video through search
+                    if not(ban_song_name in self.banned_songs):      #if its not already in the banned list
+                        print('Banned: ' + ban_song_name)
+                        self.banned_songs.append(ban_song_name)
+                        c.privmsg(self.channel, 'Banned: ' + ban_song_name)
+                        self.updateSongList()
+                    else:
+                        c.privsmsg(self.channel, ban_song_name + ' is already banned')
 
         #Raffle or Giveaway system
         elif cmd == 'raffle' or cmd == 'giveaway':
@@ -329,8 +334,23 @@ class RoboBoboBot(irc.bot.SingleServerIRCBot):
             else:
                 print('Channel is not live')
 
+        elif cmd == 'coin' or cmd == 'coins':
+            flip = random.randint(0,1)
+            if flip == 1:
+                c.privmsg(self.channel, "It's Heads!")
+            else:
+                c.privmsg(self.channel, "It's Tails!")
+        
+        elif cmd == 'dice':
+            if args == None:
+                sides = 6
+            else:
+                sides = int(args[0])
+            num = random.randint(1, sides)
+            c.privmsg(self.channel, "It's " + str(num))
+
         # Simple Bot Commands #
-        elif cmd == 'F':
+        elif cmd == 'f':
             c.privmsg(self.channel, 'Press F to pay respects BibleThump')
         elif cmd == "schedule":           
             c.privmsg(self.channel, "Hah! You think Rohan has an actual streaming schedule?")
@@ -357,6 +377,8 @@ class RoboBoboBot(irc.bot.SingleServerIRCBot):
                 length = int(args[0])
             for _ in range(0, length):
                 c.privmsg(self.channel, 'Plague of Egypt ResidentSleeper Plague of Egypt ResidentSleeper Plague of Egypt ResidentSleeper Plague of Egypt ResidentSleeper Plague of Egypt ResidentSleeper Plague of Egypt ResidentSleeper Plague of Egypt ResidentSleeper')
+        elif cmd == 'pmg' or cmd == 'poomg':
+            c.privmsg(self.channel, 'Poops McGee Strikes Again!')
         #cmd for list of current commands
         elif cmd == 'cmds':
             c.privmsg(self.channel, 'The current commands are: game, title, deaths, discord, schedule, F, cap, gone, pog, cheese, plague <#>')
