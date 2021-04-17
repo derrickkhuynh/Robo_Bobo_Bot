@@ -142,6 +142,7 @@ class RoboBoboBot(irc.bot.SingleServerIRCBot):
         request.execute()
 
     def repeatMsg(self, message, arg_length = 1):
+        c = self.connection
         if int(arg_length) > 5:
             length = 5
         else:
