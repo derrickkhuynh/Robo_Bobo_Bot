@@ -5,6 +5,7 @@
 
 import os
 import sys
+import pickle
 from dotenv import load_dotenv
 
 import random
@@ -18,6 +19,7 @@ from dateutil import tz
 #youtube imports 
 import urllib.parse as urlparse
 #Google API imports for youtube playlist requests
+from google.auth.transport.requests import Request
 import google_auth_oauthlib.flow
 import googleapiclient.discovery
 import googleapiclient.errors
@@ -25,6 +27,39 @@ import googleapiclient.errors
 yt_scopes = ["https://www.googleapis.com/auth/youtube.force-ssl"]
 
 class RoboBoboBot(irc.bot.SingleServerIRCBot):
+    #conduct youtube authorization and return a youtube object to conduct calls with
+    #the credentials are not stored as a class var (only local var) for safety and are deleted after initialization
+    def yt_authorization(self):
+        #check if a pickle exists with the token
+        if os.path.exists('token.pickle'):
+            print('Loading Credentials From File...')
+            with open('token.pickle', 'rb') as token:
+                credentials = pickle.load(token)
+        else:
+            credentials = None
+
+        # If there are no valid credentials available, then either refresh the token or log in.
+        if not credentials or not credentials.valid:
+            if credentials and credentials.expired and credentials.refresh_token:
+                print('Refreshing Access Token...')
+                credentials.refresh(Request())
+            else:
+                print('Fetching New Tokens...')
+                client_secrets_file = "Main\client_id.json"
+                flow = google_auth_oauthlib.flow.InstalledAppFlow.from_client_secrets_file(client_secrets_file, yt_scopes)
+                flow.run_local_server(port=8080, prompt='consent',
+                                    authorization_prompt_message='')
+                credentials = flow.credentials
+
+                # Save the credentials for the next run
+                with open('token.pickle', 'wb') as f:
+                    print('Saving Credentials for Future Use...')
+                    pickle.dump(credentials, f)
+
+        api_service_name = "youtube"
+        api_version = "v3"
+        self.youtube = googleapiclient.discovery.build(api_service_name, api_version, credentials=credentials)
+    
     def __init__(self):
         #load env stuff
         load_dotenv()
@@ -47,9 +82,7 @@ class RoboBoboBot(irc.bot.SingleServerIRCBot):
         self.banned_songs = []
 
         # Youtube Authentication
-        client_secrets_file = "Main\client_id.json"
-        flow = google_auth_oauthlib.flow.InstalledAppFlow.from_client_secrets_file(client_secrets_file, yt_scopes)
-        self.credentials = flow.run_console()
+        self.yt_authorization()
 
         #use the refresh token from .env to request a new access token
         url = 'https://id.twitch.tv/oauth2/token?grant_type=refresh_token&refresh_token='+os.getenv('TW_REFRESH_TOKEN')+'&client_id='+self.client_id+'&client_secret='+os.getenv('TWITCH_CLIENT_SECRET')+'&scope=channel:edit:commercial'
@@ -69,10 +102,7 @@ class RoboBoboBot(irc.bot.SingleServerIRCBot):
 
     #using the search term, search for the top result from youtube, and get it's song id and name, then add it to the queue
     def searchSong(self, search_term):
-        api_service_name = "youtube"
-        api_version = "v3"
-        youtube = googleapiclient.discovery.build(api_service_name, api_version, credentials=self.credentials)
-        request = youtube.search().list(part="snippet", maxResults=1, q=search_term)
+        request = self.youtube.search().list(part="snippet", maxResults=1, q=search_term)
         response = request.execute()  #request top result from youtube
         try:
             req_song_id = response['items'][0]['id']['videoId']
@@ -83,10 +113,7 @@ class RoboBoboBot(irc.bot.SingleServerIRCBot):
         return song_name, req_song_id
 
     def queueSong(self, request_song_id):
-        api_service_name = "youtube"
-        api_version = "v3"
-        youtube = googleapiclient.discovery.build(api_service_name, api_version, credentials=self.credentials)
-        request = youtube.playlistItems().insert(part="snippet", body={"snippet": {
+        request = self.youtube.playlistItems().insert(part="snippet", body={"snippet": {
             "playlistId": "PLpKWYssZZaRkwTiqBCEytDUNySoREGTPf",
             "position": 100, #arbitrarily set position to 100 to add to end of playlist
             "resourceId": {
@@ -100,10 +127,7 @@ class RoboBoboBot(irc.bot.SingleServerIRCBot):
         return song_name
     
     def updateSongList(self):
-        api_service_name = "youtube"
-        api_version = "v3"
-        youtube = googleapiclient.discovery.build(api_service_name, api_version, credentials=self.credentials)
-        request = youtube.playlistItems().list(part="snippet", maxResults=50, playlistId="PLpKWYssZZaRkwTiqBCEytDUNySoREGTPf")
+        request = self.youtube.playlistItems().list(part="snippet", maxResults=50, playlistId="PLpKWYssZZaRkwTiqBCEytDUNySoREGTPf")
         response = request.execute()
 
         #delete any previous info (may be outdated)
@@ -114,11 +138,16 @@ class RoboBoboBot(irc.bot.SingleServerIRCBot):
             self.song_names.append(response['items'][x]['snippet']['title'])
     
     def deleteSong(self, del_song_id):
-        api_service_name = "youtube"
-        api_version = "v3"
-        youtube = googleapiclient.discovery.build(api_service_name, api_version, credentials=self.credentials)
-        request = youtube.playlistItems().delete(id = del_song_id)
+        request = self.youtube.playlistItems().delete(id = del_song_id)
         request.execute()
+
+    def repeatMsg(self, message, arg_length = 1):
+        if int(arg_length) > 5:
+            length = 5
+        else:
+            length = int(arg_length)
+        for _ in range(0, length):
+            c.privmsg(self.channel, message)
         
     def on_welcome(self, c, e):
         print('Joining ' + self.channel)
@@ -369,14 +398,11 @@ class RoboBoboBot(irc.bot.SingleServerIRCBot):
         elif cmd == 'robert':
             c.privmsg(self.channel, "ROBERTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT!!!!!!!!!!!!!!!!!!")
         elif cmd == 'plague':
-            if args == None: #if no length given, default to 60 sec
-                length = 1
-            elif int(args[0]) > 5:
-                length = 5
-            else:
-                length = int(args[0])
-            for _ in range(0, length):
-                c.privmsg(self.channel, 'Plague of Egypt ResidentSleeper Plague of Egypt ResidentSleeper Plague of Egypt ResidentSleeper Plague of Egypt ResidentSleeper Plague of Egypt ResidentSleeper Plague of Egypt ResidentSleeper Plague of Egypt ResidentSleeper')
+            message = 'Plague of Egypt ResidentSleeper Plague of Egypt ResidentSleeper Plague of Egypt ResidentSleeper Plague of Egypt ResidentSleeper Plague of Egypt ResidentSleeper Plague of Egypt ResidentSleeper Plague of Egypt ResidentSleeper'
+            self.repeatMsg(message, args[0])
+        elif cmd == 'BOBO':
+            message = 'xrohanBOBO xrohanBOBO xrohanBOBO xrohanBOBO xrohanBOBO xrohanBOBO xrohanBOBO xrohanBOBO xrohanBOBO xrohanBOBO xrohanBOBO xrohanBOBO xrohanBOBO xrohanBOBO xrohanBOBO xrohanBOBO xrohanBOBO xrohanBOBO xrohanBOBO xrohanBOBO xrohanBOBO xrohanBOBO '
+            self.repeatMsg(message, args[0])
         elif cmd == 'pmg' or cmd == 'poomg':
             c.privmsg(self.channel, 'Poops McGee Strikes Again!')
         #cmd for list of current commands
