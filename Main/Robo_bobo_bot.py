@@ -7,7 +7,6 @@ import os
 import sys
 import pickle
 from dotenv import load_dotenv
-
 import random
 #twitch bot imports
 import irc.bot
@@ -23,44 +22,70 @@ from google.auth.transport.requests import Request
 import google_auth_oauthlib.flow
 import googleapiclient.discovery
 import googleapiclient.errors
+
 #youtube scopes
 yt_scopes = ["https://www.googleapis.com/auth/youtube.force-ssl"]
+tw_scopes = '&channel:edit:commercial%20channel:manage:redemptions'
 
 class RoboBoboBot(irc.bot.SingleServerIRCBot):
     #conduct youtube authorization and return a youtube object to conduct calls with
     #the credentials are not stored as a class var (only local var) for safety and are deleted after initialization
     def yt_authorization(self):
         #check if a pickle exists with the token
-        if os.path.exists('token.pickle'):
-            print('Loading Credentials From File...')
-            with open('token.pickle', 'rb') as token:
-                credentials = pickle.load(token)
+        if os.path.exists('yt_token.pickle'):
+            print('Loading Youtube Credentials From File...')
+            with open('yt_token.pickle', 'rb') as token:
+                yt_credentials = pickle.load(token)
         else:
-            credentials = None
+            yt_credentials = None
 
         # If there are no valid credentials available, then either refresh the token or log in.
-        if not credentials or not credentials.valid:
-            if credentials and credentials.expired and credentials.refresh_token:
+        if not yt_credentials or not yt_credentials.valid:
+            if yt_credentials and yt_credentials.expired and yt_credentials.refresh_token:
                 print('Refreshing Access Token...')
-                credentials.refresh(Request())
+                yt_credentials.refresh(Request())
             else:
                 print('Fetching New Tokens...')
                 client_secrets_file = "Main\client_id.json"
                 flow = google_auth_oauthlib.flow.InstalledAppFlow.from_client_secrets_file(client_secrets_file, yt_scopes)
                 flow.run_local_server(port=8080, prompt='consent',
                                     authorization_prompt_message='')
-                credentials = flow.credentials
+                yt_credentials = flow.credentials
 
                 # Save the credentials for the next run
-                with open('token.pickle', 'wb') as f:
+                with open('yt_token.pickle', 'wb') as f:
                     print('Saving Credentials for Future Use...')
-                    pickle.dump(credentials, f)
+                    pickle.dump(yt_credentials, f)
 
         api_service_name = "youtube"
         api_version = "v3"
-        self.youtube = googleapiclient.discovery.build(api_service_name, api_version, credentials=credentials)
+        self.youtube = googleapiclient.discovery.build(api_service_name, api_version, credentials=yt_credentials)
     
-    
+    def tw_authentication(self):
+        #check if previously given access token is stored
+        if os.path.exists('tw_token.pickle'):
+            print('Loading Twitch Access Token From File...')
+            with open('tw_token.pickle', 'rb') as token:
+                self.token = pickle.load(token)
+            #once we got the previously gotten token, send a request to twitch to see if its still active
+        else:
+            self.refresh_token()
+
+    def refresh_token(self):
+        url = 'https://id.twitch.tv/oauth2/token?grant_type=refresh_token&refresh_token='+os.getenv('TW_REFRESH_TOKEN')+'&client_id='+self.client_id+'&client_secret='+os.getenv('TWITCH_CLIENT_SECRET')+'&scope='+tw_scopes
+        r = requests.post(url).json()
+        if 'access_token' in r:
+            self.token = r['access_token']
+            print('Access Token Granted')
+
+            # Save the credentials for the next run
+            with open('tw_token.pickle', 'wb') as f:
+                print('Saving Credentials for Future Use...')
+                pickle.dump(self.token, f)
+        else: #if failed, exit
+            print('Refresh request failed')
+            exit()
+
     def __init__(self):
         #load env stuff
         load_dotenv()
@@ -71,6 +96,7 @@ class RoboBoboBot(irc.bot.SingleServerIRCBot):
         self.channel_id = os.getenv('XROHANTV_ID')
         self.channel = '#xrohantv'
 
+        #time when Rohan started streaming
         self.start_time = None
 
         #giveaway trackers
@@ -84,16 +110,7 @@ class RoboBoboBot(irc.bot.SingleServerIRCBot):
 
         # Youtube Authentication
         self.yt_authorization()
-
-        #use the refresh token from .env to request a new access token
-        url = 'https://id.twitch.tv/oauth2/token?grant_type=refresh_token&refresh_token='+os.getenv('TW_REFRESH_TOKEN')+'&client_id='+self.client_id+'&client_secret='+os.getenv('TWITCH_CLIENT_SECRET')+'&scope=channel:edit:commercial'
-        r = requests.post(url).json()
-        if 'access_token' in r:
-            self.token = r['access_token']
-            print('Access Token Granted')
-        else: #if failed, exit
-            print('Refresh request failed')
-            exit()
+        self.tw_authentication()
 
         # Create IRC bot connection
         server = 'irc.chat.twitch.tv'
@@ -196,16 +213,27 @@ class RoboBoboBot(irc.bot.SingleServerIRCBot):
             url = 'https://api.twitch.tv/helix/channels?broadcaster_id=' + self.channel_id
             headers = {'Client-ID': self.client_id, 'Authorization': 'Bearer ' + self.token}
             r = requests.get(url, headers=headers).json()
-            r = r['data'][0]
-            c.privmsg(self.channel, r["broadcaster_name"] + ' is currently playing ' + r['game_name'])
+            try: #see if the request was successful
+                r = r['data'][0]
+            except:
+                #if the request was not successful, refresh the token and rerun the command (is this dangerous?)
+                print('Command Failed, Refreshing Token and Retrying')
+                self.refresh_token()
+                self.do_command(self, e, cmd, args, mod, name)
+            c.privmsg(self.channel, r["broadcaster_name"] + ' is currently playing ' + r['game_name'] + '.')
 
         # Poll the API the get the current status of the stream
         elif cmd == "title":
             url = 'https://api.twitch.tv/helix/channels?broadcaster_id=' + self.channel_id
             headers = {'Client-ID': self.client_id, 'Authorization': 'Bearer ' + self.token}
             r = requests.get(url, headers=headers).json()
-            r = r['data'][0]
-            c.privmsg(self.channel, r['broadcaster_name'] + ' channel title is currently ' + r['title'])
+            try: #see if the request was successful
+                r = r['data'][0]
+            except:
+                #if the request was not successful, refresh the token and rerun the command (is this dangerous?)
+                self.refresh_token()
+                self.do_command(self, e, cmd, args, mod, name)
+            c.privmsg(self.channel, r['broadcaster_name'] + ' channel title is currently ' + r['title'] + '.')
 
         #death counter commands
         elif cmd == "deaths" or cmd == 'death':
@@ -248,9 +276,12 @@ class RoboBoboBot(irc.bot.SingleServerIRCBot):
                 headers = {'Client-Id': self.client_id, 'Content-Type': 'application/json',  'Authorization': 'Bearer ' + self.token}
                 raw_data = '{ "broadcaster_id": "%s", "length": %d }' %(self.channel_id, length)
                 r = requests.post(url, data=raw_data, headers=headers).json()
-                print(r)
-                if 'data' in r: #if succeeded, print in the chat
+                try:
+                    length = test['data'][0]['length']
                     c.privmsg(self.channel, 'Running a %d sec ad' %length) 
+                except:
+                    self.refresh_token()
+                    self.do_command(self, e, cmd, args, mod, name)
             else:
                 c.privmsg(self.channel, 'This is a mod only command')
 

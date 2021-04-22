@@ -14,6 +14,8 @@ Install irc.bot and all other modules required
 Create a .env file to input all private info (client secret/id, refresh tokens, etc)
 
 Then click run script
+If yt_token.pickle not provided, then authorize the bot to manage the youtube playlist
+The credentials will be authomatically stored
 
 # Features:
 Key Features:
