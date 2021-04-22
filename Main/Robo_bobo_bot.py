@@ -60,6 +60,7 @@ class RoboBoboBot(irc.bot.SingleServerIRCBot):
         api_version = "v3"
         self.youtube = googleapiclient.discovery.build(api_service_name, api_version, credentials=credentials)
     
+    
     def __init__(self):
         #load env stuff
         load_dotenv()
@@ -182,6 +183,8 @@ class RoboBoboBot(irc.bot.SingleServerIRCBot):
                 mod = True
             cmd = cmd.lower()
             self.do_command(e, cmd, args, mod, name)
+        elif e.arguments[0][:1].lower() == 'f':
+            c.privmsg(self.channel, 'Press F to pay respects BibleThump')
         return
 
     #cmd is the first word after !, and args is the 2nd word afterwords (ex: !ad 30, cmd = 'ad', args = 30)
@@ -389,12 +392,14 @@ class RoboBoboBot(irc.bot.SingleServerIRCBot):
         elif cmd == 'gone':
             c.privmsg(self.channel, '🦀🦀🦀 ROHAN IS GONE 🦀🦀🦀')
         elif cmd == 'pog':
-            c.privmsg(self.channel, 'PogChamp PogChamp PogChamp PogChamp PogChamp PogChamp PogChamp PogChamp PogChamp PogChamp PogChamp PogChamp PogChamp PogChamp')
+            c.privmsg(self.channel, 'POGGERS PogChamp PogChamp PogChamp PogChamp PogChamp PogChamp PogChamp PogChamp PogChamp PogChamp PogChamp PogChamp PogChamp PogChamp')
         elif cmd == 'cheese':
-            c.privmsg(self.channel, '🧀🧀🧀 THATS SOME CHEESE🧀🧀🧀')
+            c.privmsg(self.channel, '🧀🧀🧀 THATS SOME CHEESE🧀🧀🧀 https://www.twitch.tv/xrohantv/clip/CrepuscularExuberantShrewPoooound')
+        elif cmd == 'cheeseless':
+            c.privmsg(self.channel, 'Your prayers to The Cheese god remain unanswered... BibleThump https://clips.twitch.tv/AcceptableHorribleAmazonStrawBeary-wAZaHhkwkKh0xmLK')
         elif cmd == 'defeat':
             c.privmsg(self.channel, 'Remember Rohan, Hesitation is Defeat')
-        elif cmd == 'djkhaled' or cmd == 'khaled':
+        elif cmd == 'djkhaled' or cmd == 'khaled' or cmd == 'onemore':
             c.privmsg(self.channel, 'As DJ Khaled famously said, "ONE MORE"')
         elif cmd == 'robert':
             c.privmsg(self.channel, "ROBERTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT!!!!!!!!!!!!!!!!!!")
