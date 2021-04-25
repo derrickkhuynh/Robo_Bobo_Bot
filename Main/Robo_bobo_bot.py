@@ -3,6 +3,8 @@
 # !topbits
 # allow for channel points to request a song
 
+#To run the bot, click the green run button on the top right 
+
 import os
 import sys
 import pickle
