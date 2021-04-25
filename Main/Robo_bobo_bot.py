@@ -72,6 +72,7 @@ class RoboBoboBot(irc.bot.SingleServerIRCBot):
             #once we got the previously gotten token, send a request to twitch to see if its still active
         else:
             self.refresh_token()
+
     #if token is expired, request a new token using the refresh token
     def refresh_token(self):
         url = 'https://id.twitch.tv/oauth2/token?grant_type=refresh_token&refresh_token='+os.getenv('TW_REFRESH_TOKEN')+'&client_id='+self.client_id+'&client_secret='+os.getenv('TWITCH_CLIENT_SECRET')+'&scope='+tw_scopes
@@ -87,6 +88,7 @@ class RoboBoboBot(irc.bot.SingleServerIRCBot):
         else: #if failed, exit
             print('Refresh request failed')
             exit()
+
     #for validating the token every 1 hour
     def validateToken(self):
         current_time = datetime.now(tz.UTC)
@@ -148,6 +150,7 @@ class RoboBoboBot(irc.bot.SingleServerIRCBot):
             song_name = None
         return song_name, req_song_id
 
+    #using the song id, add it to the youtube playlist
     def queueSong(self, request_song_id):
         request = self.youtube.playlistItems().insert(part="snippet", body={"snippet": {
             "playlistId": "PLpKWYssZZaRkwTiqBCEytDUNySoREGTPf",
@@ -162,6 +165,7 @@ class RoboBoboBot(irc.bot.SingleServerIRCBot):
         print('Queueing song: ' + song_name)
         return song_name
     
+    #update the bot's local list of songs
     def updateSongList(self):
         request = self.youtube.playlistItems().list(part="snippet", maxResults=50, playlistId="PLpKWYssZZaRkwTiqBCEytDUNySoREGTPf")
         response = request.execute()
@@ -173,6 +177,7 @@ class RoboBoboBot(irc.bot.SingleServerIRCBot):
             self.song_ids.append(response['items'][x]['id'])
             self.song_names.append(response['items'][x]['snippet']['title'])
     
+    #using song id, remove it from the playlist
     def deleteSong(self, del_song_id):
         request = self.youtube.playlistItems().delete(id = del_song_id)
         request.execute()
@@ -186,6 +191,7 @@ class RoboBoboBot(irc.bot.SingleServerIRCBot):
         for _ in range(0, length):
             c.privmsg(self.channel, message)
     
+    #allows for detection of bigfollows and tries to ban the user
     def spamDetection(self, message, name):
         c = self.connection
         if 'bigfollows' in message:
