@@ -48,7 +48,7 @@ class RoboBoboBot(irc.bot.SingleServerIRCBot):
                 yt_credentials.refresh(Request())
             else:
                 print('Fetching New Tokens...')
-                client_secrets_file = "Main\client_id.json"
+                client_secrets_file = "client_id.json"
                 flow = google_auth_oauthlib.flow.InstalledAppFlow.from_client_secrets_file(client_secrets_file, yt_scopes)
                 flow.run_local_server(port=8080, prompt='consent',
                                     authorization_prompt_message='')
@@ -104,13 +104,13 @@ class RoboBoboBot(irc.bot.SingleServerIRCBot):
         headers = {'Authorization': 'OAuth %s' %(self.token)}
         r = requests.get('https://id.twitch.tv/oauth2/validate', headers=headers)
         print(r)
+        self.time_last_validated = current_time
 
     def __init__(self):
         #load env stuff
         load_dotenv()
         self.username = 'robo_bobo_bot'
         self.death_counter = 0
-        #self.death_filepath = "Main\death_counter.txt"
         self.client_id = os.getenv('TWITCH_CLIENT_ID')
         self.channel_id = os.getenv('XROHANTV_ID')
         self.channel = '#xrohantv'
