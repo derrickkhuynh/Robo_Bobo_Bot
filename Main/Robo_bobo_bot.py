@@ -1,5 +1,5 @@
 #Robo_bobo_bot
-#TODO: Implement giveaway cmd
+#TODO:
 # !topbits
 # allow for channel points to request a song
 
@@ -86,6 +86,21 @@ class RoboBoboBot(irc.bot.SingleServerIRCBot):
             print('Refresh request failed')
             exit()
 
+    def validateToken(self):
+        current_time = datetime.now(tz.UTC)
+        if self.time_last_validated != None:
+            #find the time difference
+            time_difference = str(current_time - self.time_last_validated).split(':')
+            print(time_difference)
+            hours = int(time_difference[0]) #get number of hours since last validation
+            if hours < 1:
+                return
+        #if it is not None, or is >1
+        print('Validating OAuth Token')
+        headers = {'Authorization': 'OAuth %s' %(self.token)}
+        r = requests.get('https://id.twitch.tv/oauth2/validate', headers=headers)
+        print(r)
+
     def __init__(self):
         #load env stuff
         load_dotenv()
@@ -96,7 +111,8 @@ class RoboBoboBot(irc.bot.SingleServerIRCBot):
         self.channel_id = os.getenv('XROHANTV_ID')
         self.channel = '#xrohantv'
 
-        #time when Rohan started streaming
+        #time vars
+        self.time_last_validated = None
         self.start_time = None
 
         #giveaway trackers
@@ -167,6 +183,11 @@ class RoboBoboBot(irc.bot.SingleServerIRCBot):
             length = int(arg_length)
         for _ in range(0, length):
             c.privmsg(self.channel, message)
+    
+    def spamDetection(self, message, name):
+        c = self.connection
+        if 'bigfollows' in message:
+            c.privsmsg(self.channel, '/ban %s' %(name))
         
     def on_welcome(self, c, e):
         print('Joining ' + self.channel)
@@ -178,7 +199,10 @@ class RoboBoboBot(irc.bot.SingleServerIRCBot):
         c.join(self.channel)
 
     def on_pubmsg(self, c, e):
+        self.validateToken()
         mod = False
+        #get the name of the chatter
+        name = e.source.split('!')[0]
         # If a chat message starts with an exclamation point, try to run it as a command
         if e.arguments[0][:1] == '!':
             if len(e.arguments[0].split(' ')) > 1: #if multi-phrase commmand (ex: !ad 30)
@@ -188,20 +212,17 @@ class RoboBoboBot(irc.bot.SingleServerIRCBot):
             cmd = e.arguments[0].split(' ')[0][1:]
             #check if user is a mod
             for _, value in e.tags[-1].items():
-                if value == 'mod':
+                if value == 'mod' or name == 'xrohantv':
                     mod = True
             if args != None:
                 print('Received command: ' + cmd + ' ' + args[0])
             else:
                 print('Received command: ' + cmd)
-            #get chatter's name
-            name = e.source.split('!')[0]
-            if name == 'xrohantv': #rohan is a mod right?
-                mod = True
             cmd = cmd.lower()
             self.do_command(e, cmd, args, mod, name)
-        elif e.arguments[0][:1].lower() == 'f':
+        elif e.arguments[0].lower() == 'f':
             c.privmsg(self.channel, 'Press F to pay respects BibleThump')
+        self.spamDetection(e.arguments[0], name)
         return
 
     #cmd is the first word after !, and args is the 2nd word afterwords (ex: !ad 30, cmd = 'ad', args = 30)
@@ -219,7 +240,7 @@ class RoboBoboBot(irc.bot.SingleServerIRCBot):
                 #if the request was not successful, refresh the token and rerun the command (is this dangerous?)
                 print('Command Failed, Refreshing Token and Retrying')
                 self.refresh_token()
-                self.do_command(self, e, cmd, args, mod, name)
+                self.do_command(e, cmd, args, mod, name)
             c.privmsg(self.channel, r["broadcaster_name"] + ' is currently playing ' + r['game_name'] + '.')
 
         # Poll the API the get the current status of the stream
@@ -232,7 +253,7 @@ class RoboBoboBot(irc.bot.SingleServerIRCBot):
             except:
                 #if the request was not successful, refresh the token and rerun the command (is this dangerous?)
                 self.refresh_token()
-                self.do_command(self, e, cmd, args, mod, name)
+                self.do_command(e, cmd, args, mod, name)
             c.privmsg(self.channel, r['broadcaster_name'] + ' channel title is currently ' + r['title'] + '.')
 
         #death counter commands
@@ -281,7 +302,7 @@ class RoboBoboBot(irc.bot.SingleServerIRCBot):
                     c.privmsg(self.channel, 'Running a %d sec ad' %length) 
                 except:
                     self.refresh_token()
-                    self.do_command(self, e, cmd, args, mod, name)
+                    self.do_command(e, cmd, args, mod, name)
             else:
                 c.privmsg(self.channel, 'This is a mod only command')
 
@@ -383,20 +404,24 @@ class RoboBoboBot(irc.bot.SingleServerIRCBot):
             headers = {'Client-Id': self.client_id, 'Authorization': 'Bearer ' + self.token}
             r = requests.get(url, headers=headers).json()
             index = -1
-            for i in range(0, len(r['data']) - 1):
-                if r['data'][i]['broadcaster_login'] == 'xrohantv':
-                    index = i
-                    break
-            if r['data'][index]['started_at'] != "" and index != -1: #check if started at is empty (Rohan isn't streaming), if index = -1, then it couldn't find xRohanTV
-                self.start_time = parser.parse(r['data'][index]['started_at'])
-                current_time = datetime.now(tz.UTC)
-                time_difference = str(current_time - self.start_time).split(':')
-                hours = time_difference[0]
-                minutes = time_difference[1]
-                seconds = time_difference[2][0:2]
-                c.privmsg(self.channel, "Rohan's been streaming for " + hours + ' hours, ' + minutes + ' minutes, and ' + seconds + ' seconds.')
-            else:
-                print('Channel is not live')
+            try:
+                for i in range(0, len(r['data']) - 1):
+                    if r['data'][i]['broadcaster_login'] == 'xrohantv':
+                        index = i
+                        break
+                if r['data'][index]['started_at'] != "" and index != -1: #check if started at is empty (Rohan isn't streaming), if index = -1, then it couldn't find xRohanTV
+                    self.start_time = parser.parse(r['data'][index]['started_at'])
+                    current_time = datetime.now(tz.UTC)
+                    time_difference = str(current_time - self.start_time).split(':')
+                    hours = time_difference[0]
+                    minutes = time_difference[1]
+                    seconds = time_difference[2][0:2]
+                    c.privmsg(self.channel, "Rohan's been streaming for " + hours + ' hours, ' + minutes + ' minutes, and ' + seconds + ' seconds.')
+                else:
+                    print('Channel is not live')
+            except:
+                self.refresh_token()
+                self.do_command(e, cmd, args, mod, name)
 
         elif cmd == 'coin' or cmd == 'coins':
             flip = random.randint(0,1)
