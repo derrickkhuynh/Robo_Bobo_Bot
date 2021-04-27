@@ -32,6 +32,27 @@ tw_scopes = '&channel:edit:commercial%20channel:manage:redemptions'
 #discord join link
 discord_link = 'https://discord.gg/Za5ngC9QsE'
 
+#some necessary functions to allow for pyinstaller (it's a bug with requests)
+def override_where():
+    """ overrides certifi.core.where to return actual location of cacert.pem"""
+    # change this to match the location of cacert.pem
+    return os.path.abspath("cacert.pem")
+
+# is the program compiled?
+if hasattr(sys, "frozen"):
+    import certifi.core
+
+    os.environ["REQUESTS_CA_BUNDLE"] = override_where()
+    certifi.core.where = override_where
+
+    # delay importing until after where() has been replaced
+    import requests.utils
+    import requests.adapters
+    # replace these variables in case these modules were
+    # imported before we replaced certifi.core.where
+    requests.utils.DEFAULT_CA_BUNDLE_PATH = override_where()
+    requests.adapters.DEFAULT_CA_BUNDLE_PATH = override_where()
+
 class RoboBoboBot(irc.bot.SingleServerIRCBot):
     #conduct youtube authorization and return a youtube object to conduct calls with
     #the credentials are not stored as a class var (only local var) for safety and are deleted after initialization
@@ -338,13 +359,14 @@ class RoboBoboBot(irc.bot.SingleServerIRCBot):
                 c.privmsg(self.channel, 'To request a song, use the song request channel points reward and type: "!song request <link or song name>"')
             elif args[0] == 'play' or args[0] == 'request' or args[0] == 'queue':
                 song_name = ""
-                if len(args) > 2: #searching for song name
+                if len(args) == 1: #check for !songs play/request/queue without search term
+                    c.privmsg(self.channel, "Please provide valid youtube link or song name")
+                    return
+                elif len(args) > 2: #searching for song name
                     search_term = ""
                     for i in range(1, len(args)):
                         search_term = search_term + args[i] + ' ' #combine split terms by appending the search term to the end
                     req_song_name, video_id = self.searchSong(search_term)
-                elif len(args) == 1: #check for !songs play/request/queue without search term
-                    c.privmsg(self.channel, "Please provide valid youtube link or song name")
                 else: #either has a link, song_id, or a single term search phrase
                     url_data = urlparse.urlparse(args[1]) #check if it's a link, then parse the id from it
                     if url_data[1] == 'www.youtube.com':

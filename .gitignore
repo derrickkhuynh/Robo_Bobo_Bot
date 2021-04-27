@@ -2,3 +2,8 @@ test.py
 *.pickle
 .env
 client_id.json
+*.exe
+/build
+/dist
+__pycache__
+*.spec
