@@ -1,8 +1,4 @@
-
-Main/.env
-Main/client_id.json
 test.py
-token.pickle
 *.pickle
 .env
 client_id.json
