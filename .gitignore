@@ -7,3 +7,4 @@ client_id.json
 /dist
 __pycache__
 *.spec
+test_server.py

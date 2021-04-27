@@ -1,7 +1,8 @@
 #Robo_bobo_bot
-#TODO:
+# TODO:
 # !topbits
 # allow for channel points to request a song
+# banned words filter: if a user says a banned word, then robo bobo will ban them from the chat
 
 #To run the bot, click the green run button on the top right 
 
@@ -80,7 +81,7 @@ class RoboBoboBot(irc.bot.SingleServerIRCBot):
 
                 # Save the credentials for the next run
                 with open('yt_token.pickle', 'wb') as f:
-                    print('Saving Credentials for Future Use...')
+                    print('Saving Youtube Credentials for Future Use...')
                     pickle.dump(yt_credentials, f)
 
         api_service_name = "youtube"
@@ -104,11 +105,11 @@ class RoboBoboBot(irc.bot.SingleServerIRCBot):
         r = requests.post(url).json()
         if 'access_token' in r:
             self.token = r['access_token']
-            print('Access Token Granted')
+            print('New Twitch Access Token Granted')
 
             # Save the credentials for the next run
             with open('tw_token.pickle', 'wb') as f:
-                print('Saving Credentials for Future Use...')
+                print('Saving Twitch Credentials for Future Use...')
                 pickle.dump(self.token, f)
         else: #if failed, exit
             print('Refresh request failed')
@@ -116,12 +117,13 @@ class RoboBoboBot(irc.bot.SingleServerIRCBot):
 
     #for validating the token
     def validateToken(self):
-        print('Validating OAuth Token')
+        print('Validating OAuth Token...')
         headers = {'Authorization': 'OAuth %s' %(self.token)}
         r = requests.get('https://id.twitch.tv/oauth2/validate', headers=headers)
         print(r.json())
         #if the response from the validation request is not 200, then refresh the access token and validate again
         if not(r.ok):
+            print('Oauth Token not valid')
             self.refresh_token()
             self.validateToken()
 
@@ -146,6 +148,15 @@ class RoboBoboBot(irc.bot.SingleServerIRCBot):
         self.song_names = []
         self.song_ids = []
         self.banned_songs = []
+
+        #dict to store simple commands, with loading
+        if os.path.exists('cmds.pickle'):
+            print('Loading Commands From File...')
+            with open('cmds.pickle', 'rb') as token:
+                self.cmds = pickle.load(token)
+            print('Loaded Commands: ' + ', '.join(map(str, list(self.cmds.keys()))))
+        else:
+            self.cmds = {}
 
         # Youtube Authentication
         self.yt_authorization()
@@ -215,6 +226,29 @@ class RoboBoboBot(irc.bot.SingleServerIRCBot):
         c = self.connection
         if 'bigfollows' in message:
             c.privsmsg(self.channel, '/ban %s' %(name))
+
+    def concatenateArgs(self, argsList, starting_index):
+        concatArgs = ""
+        for i in range(starting_index, len(argsList)):
+            concatArgs = concatArgs + argsList[i] + ' '
+        return concatArgs
+
+    #if the cmd is within the split list, return the key for that item
+    def findExistingCmd(self, cmd):
+        #split the existing commands into a list (ex: if !cmd add song/songs/youtube <...>,
+        #then searchList = [song, songs, youtube])
+        searchList = cmd.split('/')
+        #search for each term in the cmd list (out of existing commands)
+        for i in range(0, len(self.cmds)):
+            #split the i'th command into its parts
+            cmdList = list(self.cmds.keys())[i].split('/')
+            #for each term in the searchList, and try to find it in cmdList
+            for j in range(0, len(searchList)):
+                if cmd in cmdList:
+                    return list(self.cmds.keys())[i]
+                    print(self.cmds)
+        #if nothing was found, raise an exception
+        raise Exception('Command Not Found')
         
     def on_welcome(self, c, e):
         print('Joining ' + self.channel)
@@ -242,6 +276,7 @@ class RoboBoboBot(irc.bot.SingleServerIRCBot):
         if e.arguments[0][:1] == '!':
             if len(e.arguments[0].split(' ')) > 1: #if multi-phrase commmand (ex: !ad 30)
                 args = e.arguments[0].split(' ')[1:]
+                args[0] = args[0].lower() #convert first arg to lowercase
             else:
                 args = None
             cmd = e.arguments[0].split(' ')[0][1:]
@@ -253,6 +288,7 @@ class RoboBoboBot(irc.bot.SingleServerIRCBot):
                 print('Received command: ' + cmd + ' ' + args[0])
             else:
                 print('Received command: ' + cmd)
+            #convert cmd to lowercase
             cmd = cmd.lower()
             self.do_command(e, cmd, args, mod, name)
 
@@ -313,11 +349,11 @@ class RoboBoboBot(irc.bot.SingleServerIRCBot):
                     self.death_counter = self.death_counter - 1
             elif args[0] == 'set':
                 if mod:
-                    if args[1] != None:
+                    try: #test for a valid input
                         self.death_counter = int(args[1])
                         message = "That's death #%d. What a loser!" %int(self.death_counter)
                         c.privmsg(self.channel, message)
-                    else:
+                    except:
                         c.privmsg(self.channel, 'Please input a value to set to')
             elif args[0] == 'reset':
                     self.death_counter = 0
@@ -363,9 +399,7 @@ class RoboBoboBot(irc.bot.SingleServerIRCBot):
                     c.privmsg(self.channel, "Please provide valid youtube link or song name")
                     return
                 elif len(args) > 2: #searching for song name
-                    search_term = ""
-                    for i in range(1, len(args)):
-                        search_term = search_term + args[i] + ' ' #combine split terms by appending the search term to the end
+                    search_term = self.concatenateArgs(args, 1)
                     req_song_name, video_id = self.searchSong(search_term)
                 else: #either has a link, song_id, or a single term search phrase
                     url_data = urlparse.urlparse(args[1]) #check if it's a link, then parse the id from it
@@ -410,10 +444,8 @@ class RoboBoboBot(irc.bot.SingleServerIRCBot):
                         return
             elif args[0] == 'ban':      
                 if mod:
-                    search_term = ""
                     self.updateSongList()                           #get an updated list of songs
-                    for i in range(1, len(args)):                   #concatenate search term
-                        search_term = search_term + args[i] + ' '
+                    search_term = self.concatenateArgs(args, 1)
                     ban_song_name, _ = self.searchSong(search_term) #get the name of the video through search
                     if not(ban_song_name in self.banned_songs):      #if its not already in the banned list
                         print('Banned: ' + ban_song_name)
@@ -473,6 +505,7 @@ class RoboBoboBot(irc.bot.SingleServerIRCBot):
                 self.refresh_token()
                 self.do_command(e, cmd, args, mod, name)
 
+        #toss a coin
         elif cmd == 'coin' or cmd == 'coins':
             flip = random.randint(0,1)
             if flip == 1:
@@ -480,6 +513,7 @@ class RoboBoboBot(irc.bot.SingleServerIRCBot):
             else:
                 c.privmsg(self.channel, "It's Tails!")
         
+        #toss a dice
         elif cmd == 'dice':
             if args == None:
                 sides = 6
@@ -495,46 +529,85 @@ class RoboBoboBot(irc.bot.SingleServerIRCBot):
             num = random.randint(1, sides)
             c.privmsg(self.channel, "It's " + str(num))
 
-        # Simple Bot Commands #
-        elif cmd == 'f':
-            c.privmsg(self.channel, 'Press F to pay respects BibleThump')
-        elif cmd == "schedule":           
-            c.privmsg(self.channel, "Hah! You think Rohan has an actual streaming schedule? LOL Join the xRohanTV discord (!Discord) to be in the know :)")
-        elif cmd == 'cap':
-            c.privmsg(self.channel, "That's CAP! 🧢🧢🧢")
-        elif cmd == 'gone':
-            c.privmsg(self.channel, '🦀🦀🦀 ROHAN IS GONE 🦀🦀🦀')
-        elif cmd == 'pog' or cmd == 'poggers':
-            c.privmsg(self.channel, 'POGGERS PogChamp PogChamp PogChamp PogChamp PogChamp PogChamp PogChamp PogChamp PogChamp PogChamp PogChamp PogChamp PogChamp PogChamp')
-        elif cmd == 'cheese':
-            c.privmsg(self.channel, '🧀🧀🧀 THATS SOME CHEESE🧀🧀🧀 https://www.twitch.tv/xrohantv/clip/CrepuscularExuberantShrewPoooound')
-        elif cmd == 'cheeseless':
-            c.privmsg(self.channel, 'Your prayers to The Cheese God remain unanswered... BibleThump https://clips.twitch.tv/AcceptableHorribleAmazonStrawBeary-wAZaHhkwkKh0xmLK')
-        elif cmd == 'defeat':
-            c.privmsg(self.channel, 'Remember Rohan, Hesitation is Defeat')
-        elif cmd == 'djkhaled' or cmd == 'khaled' or cmd == 'onemore':
-            c.privmsg(self.channel, 'As DJ Khaled famously said, "ONE MORE"')
-        elif cmd == 'robert':
-            c.privmsg(self.channel, "ROBERTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT!!!!!!!!!!!!!!!!!!")
-        elif cmd == 'plague':
-            message = 'Plague of Egypt ResidentSleeper Plague of Egypt ResidentSleeper Plague of Egypt ResidentSleeper Plague of Egypt ResidentSleeper Plague of Egypt ResidentSleeper Plague of Egypt ResidentSleeper Plague of Egypt ResidentSleeper'
-            self.repeatMsg(message, args[0])
-        elif cmd == 'BOBO':
-            message = 'xrohanBOBO xrohanBOBO xrohanBOBO xrohanBOBO xrohanBOBO xrohanBOBO xrohanBOBO xrohanBOBO xrohanBOBO xrohanBOBO xrohanBOBO xrohanBOBO xrohanBOBO xrohanBOBO xrohanBOBO xrohanBOBO xrohanBOBO xrohanBOBO xrohanBOBO xrohanBOBO xrohanBOBO xrohanBOBO '
-            self.repeatMsg(message, args[0])
-        elif cmd == 'pmg' or cmd == 'poomg':
-            c.privmsg(self.channel, 'Poops McGee Strikes Again!')
-        #cmd for list of current commands
-        elif cmd == 'help':
-            c.privmsg(self.channel, 'The current commands are: ad, game, title, death, song, discord, uptime, giveaway, schedule, coin, dice <#>, F, CAP, POG')
-            c.privmsg(self.channel, 'You can type help after certain commands to get more info (ex: !ad help)')
-        # The command was not recognized
+        #simple commands add/edit/delete
+        elif cmd == 'cmd' or cmd == 'cmds':
+            if args == None:
+                return
+            elif args[0] == 'help':
+                c.privmsg(self.channel, 'To add or edit commands, type !cmd add/edit <command_name/alt_name/alt_name_2> <command response>. If you edit 1 command, you will also edit all alt commands. Note: Command names must be 1 word.')
+                c.privmsg(self.channel, "To delete a command, type !cmd delete <command_name>. It'll automatically find any alt names and delete them too.")
+                c.privmsg(self.channel, "Type !cmd list to get a list of the current simple commands.")
+
+            #list out current commands
+            elif args[0] == 'list':
+                c.privmsg(self.channel, 'Current custom commands are: ' + ', '.join(map(str, list(self.cmds.keys()))))
+
+            #add a new command
+            elif args[0] == 'add' or args[0] == 'edit':
+                if len(args) >= 3 and mod == True:
+                    #args[1] is the name of the cmd so it should be converted to lowercase
+                    args[1] = args[1].lower()
+
+                    try:
+                        #use helper function to find if given search term is part of an existing command
+                        existingCmd = self.findExistingCmd(args[1])
+                        #if it is, then update that dict value with the concatenated command response
+                        self.cmds[existingCmd] = self.concatenateArgs(args, 2)
+                        c.privmsg(self.channel, '!' + existingCmd + ' has been updated.')
+                    except:
+                        #if it's not an existing command (Exception raised by findExistingCmd), then add it to the dict
+                        self.cmds[args[1]] = self.concatenateArgs(args, 2)
+                        c.privmsg(self.channel, '!' + args[1] + ' has been added.')
+                else:
+                    print('Invalid Request/ Not a mod')
+
+            #delete an existing command
+            elif args[0] == 'delete':
+                if len(args) >= 2 and mod == True:
+                    #args[1] is the name of the cmd so it should be converted to lowercase
+                    args[1] = args[1].lower()
+                    try:
+                        #use helper function to find if given search term is part of an existing command
+                        existingCmd = self.findExistingCmd(args[1])
+                        #if it is, then pop the command
+                        self.cmds.pop(existingCmd)
+                        c.privmsg(self.channel, '!' + existingCmd + ' has been deleted')
+                    except:
+                        #if it's not an existing command (Exception raised by findExistingCmd)
+                        c.privmsg(self.channel, '!' + args[1] + ' is not an existing command.')
+                else:
+                    print('Invalid Request/ Not a mod')
+
+            # Save the commands for the next run
+            with open('cmds.pickle', 'wb') as f:
+                print('Saving Commands for Future Use...')
+                pickle.dump(self.cmds, f)
+
         else:
-            print("Did not understand command: " + cmd)
+            try:
+                print('Searching for existing command: ' + cmd)
+                existingCmd = self.findExistingCmd(cmd)
+                print('Found existing cmd: ' + existingCmd)
+                cmdResponse = self.cmds.get(existingCmd)
+                c.privmsg(self.channel, cmdResponse)
+            except:
+                print("Did not understand command: " + cmd)
+
+        # obsolete custom commands
+        # elif cmd == 'defeat':
+        #     c.privmsg(self.channel, 'Hesitation is Defeat')
+        # elif cmd == 'robert':
+        #     c.privmsg(self.channel, "ROBERTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT!!!!!!!!!!!!!!!!!!")
+        # elif cmd == 'plague':
+        #     message = 'Plague of Egypt ResidentSleeper Plague of Egypt ResidentSleeper Plague of Egypt ResidentSleeper Plague of Egypt ResidentSleeper Plague of Egypt ResidentSleeper Plague of Egypt ResidentSleeper Plague of Egypt ResidentSleeper'
+        #     self.repeatMsg(message, args[0])
+        # elif cmd == 'BOBO':
+        #     message = 'xrohanBOBO xrohanBOBO xrohanBOBO xrohanBOBO xrohanBOBO xrohanBOBO xrohanBOBO xrohanBOBO xrohanBOBO xrohanBOBO xrohanBOBO xrohanBOBO xrohanBOBO xrohanBOBO xrohanBOBO xrohanBOBO xrohanBOBO xrohanBOBO xrohanBOBO xrohanBOBO xrohanBOBO xrohanBOBO '
+        #     self.repeatMsg(message, args[0])
 
 def main():
     bot = RoboBoboBot()
     bot.start()
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()
