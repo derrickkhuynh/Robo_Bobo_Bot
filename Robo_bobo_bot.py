@@ -29,6 +29,9 @@ import googleapiclient.errors
 yt_scopes = ["https://www.googleapis.com/auth/youtube.force-ssl"]
 tw_scopes = '&channel:edit:commercial%20channel:manage:redemptions'
 
+#discord join link
+discord_link = 'https://discord.gg/Za5ngC9QsE'
+
 class RoboBoboBot(irc.bot.SingleServerIRCBot):
     #conduct youtube authorization and return a youtube object to conduct calls with
     #the credentials are not stored as a class var (only local var) for safety and are deleted after initialization
@@ -44,7 +47,7 @@ class RoboBoboBot(irc.bot.SingleServerIRCBot):
         # If there are no valid credentials available, then either refresh the token or log in.
         if not yt_credentials or not yt_credentials.valid:
             if yt_credentials and yt_credentials.expired and yt_credentials.refresh_token:
-                print('Refreshing Access Token...')
+                print('Refreshing Youtube Access Token...')
                 yt_credentials.refresh(Request())
             else:
                 print('Fetching New Tokens...')
@@ -69,7 +72,8 @@ class RoboBoboBot(irc.bot.SingleServerIRCBot):
             print('Loading Twitch Access Token From File...')
             with open('tw_token.pickle', 'rb') as token:
                 self.token = pickle.load(token)
-            #once we got the previously gotten token, send a request to twitch to see if its still active
+            #once we got the previously gotten token, send a validation request to twitch to see if its still active
+            self.validateToken()
         else:
             self.refresh_token()
 
@@ -89,22 +93,16 @@ class RoboBoboBot(irc.bot.SingleServerIRCBot):
             print('Refresh request failed')
             exit()
 
-    #for validating the token every 1 hour
+    #for validating the token
     def validateToken(self):
-        current_time = datetime.now(tz.UTC)
-        if self.time_last_validated != None:
-            #find the time difference
-            time_difference = str(current_time - self.time_last_validated).split(':')
-            print(time_difference)
-            hours = int(time_difference[0]) #get number of hours since last validation
-            if hours < 1:
-                return
-        #if it is not None, or is >1
         print('Validating OAuth Token')
         headers = {'Authorization': 'OAuth %s' %(self.token)}
         r = requests.get('https://id.twitch.tv/oauth2/validate', headers=headers)
-        print(r)
-        self.time_last_validated = current_time
+        print(r.json())
+        #if the response from the validation request is not 200, then refresh the access token and validate again
+        if not(r.ok):
+            self.refresh_token()
+            self.validateToken()
 
     def __init__(self):
         #load env stuff
@@ -116,7 +114,7 @@ class RoboBoboBot(irc.bot.SingleServerIRCBot):
         self.channel = '#xrohantv'
 
         #time vars
-        self.time_last_validated = None
+        self.time_last_checked = datetime.now(tz.UTC)
         self.start_time = None
 
         #giveaway trackers
@@ -207,7 +205,15 @@ class RoboBoboBot(irc.bot.SingleServerIRCBot):
         c.join(self.channel)
 
     def on_pubmsg(self, c, e):
-        self.validateToken()
+        current_time = datetime.now(tz.UTC)
+        #find the time difference
+        time_difference = str(current_time - self.time_last_checked).split(':')
+        hours = int(time_difference[0]) #get number of hours since last validation
+        if hours > 1:
+            self.validateToken()
+            c.privmsg(self.channel, 'Join the xRohanTV community discord at: ' + discord_link)
+            self.time_last_checked = current_time
+
         mod = False
         #get the name of the chatter
         name = e.source.split('!')[0]
@@ -228,6 +234,8 @@ class RoboBoboBot(irc.bot.SingleServerIRCBot):
                 print('Received command: ' + cmd)
             cmd = cmd.lower()
             self.do_command(e, cmd, args, mod, name)
+
+        #allow for simple commands without '!' prefix
         elif e.arguments[0].lower() == 'f':
             c.privmsg(self.channel, 'Press F to pay respects BibleThump')
         self.spamDetection(e.arguments[0], name)
@@ -269,6 +277,8 @@ class RoboBoboBot(irc.bot.SingleServerIRCBot):
             if args == None:
                 message = "Rohan has died %d times. What a loser!" %int(self.death_counter)
                 c.privmsg(self.channel, message)
+            elif args[0] == 'help':
+                c.privmsg(self.channel, '!death will provide the current death count, and mods can do !death +/-/set <#>/reset to change the current count')
             elif args[0] == "+" or args[0] == 'add':
                 if mod:
                     self.death_counter = self.death_counter+1
@@ -295,10 +305,16 @@ class RoboBoboBot(irc.bot.SingleServerIRCBot):
         #run an ad
         elif cmd == "ad":
             if mod:
-                if args != None: #round their given length
-                    length = round(int(args[0])/30)*30 #div by 30 then round to nearest number, then *30 to get multiple of 30 length
-                    if length > 180: #if length is greater than max length (3 mins), then set to 3 mins
-                        length = 180
+                if args[0] == 'help':
+                    c.privmsg(self.channel, '(Mod Only) Send !ad <length> to request an ad. Length can be 30/60/90/120/150/180.')
+                elif args != None: #round their given length
+                    try:
+                        length = round(int(args[0])/30)*30 #div by 30 then round to nearest number, then *30 to get multiple of 30 length
+                        if length > 180: #if length is greater than max length (3 mins), then set to 3 mins
+                            length = 180
+                    except:
+                        c.privmsg(self.channel, 'Please input a valid ad length')
+                        return
                 else:  #if no length given, default to 60 sec
                     length = 60
                 url = 'https://api.twitch.tv/helix/channels/commercial' 
@@ -318,6 +334,8 @@ class RoboBoboBot(irc.bot.SingleServerIRCBot):
         elif cmd == 'songs' or cmd == 'song':
             if args == None or args[0] == 'link' or args[0] == 'playlist': #check for empty request: !songs to provide the link
                 c.privmsg(self.channel, 'Listen along at https://www.youtube.com/playlist?list=PLpKWYssZZaRkwTiqBCEytDUNySoREGTPf')
+            elif args[0] == 'help':
+                c.privmsg(self.channel, 'To request a song, use the song request channel points reward and type: "!song request <link or song name>"')
             elif args[0] == 'play' or args[0] == 'request' or args[0] == 'queue':
                 song_name = ""
                 if len(args) > 2: #searching for song name
@@ -389,11 +407,13 @@ class RoboBoboBot(irc.bot.SingleServerIRCBot):
             if args == None:
                 if self.giveaway_on and not(name in self.giveaway_entries): #if a giveaway is running, and they are already not already entered
                     self.giveaway_entries.append(name) #add that name to an array
+            elif args[0] == 'help':
+                c.privsmsg(self.channel, '(mod only) To start a giveaway, send !giveaway start. To finish it, send !giveaway end, and the winner will be chosen.')
             elif args[0] == 'start' or args[0] == 'begin':
                 if mod and self.giveaway_on == False:
                     self.giveaway_on = True
                     self.giveaway_entries = []
-                    c.privmsg(self.channel, 'The giveaway has started! Type !raffle to enter')
+                    c.privmsg(self.channel, 'The giveaway has started! Chat !giveaway to enter!!!')
             elif args[0] == 'end':
                 if mod and self.giveaway_on:
                     print(self.giveaway_entries)
@@ -404,7 +424,7 @@ class RoboBoboBot(irc.bot.SingleServerIRCBot):
             
         #plug discord server
         elif cmd == 'discord' or cmd == 'socials':
-            c.privmsg(self.channel, 'Join the xRohanTV community discord at: https://discord.gg/Za5ngC9QsE')
+            c.privmsg(self.channel, 'Join the xRohanTV community discord at: ' + discord_link)
 
         #find current uptime
         elif cmd == 'uptime':
@@ -441,8 +461,15 @@ class RoboBoboBot(irc.bot.SingleServerIRCBot):
         elif cmd == 'dice':
             if args == None:
                 sides = 6
+            elif args[0] == 'help':
+                c.privmsg(self.channel, "To use, send !dice <number of sides>. If no number is given, it'll default to a 6 sided die")
+                return
             else:
-                sides = int(args[0])
+                try:
+                    sides = int(args[0])
+                except:
+                    c.privmsg(self.channel, 'Please provide valid number of sides')
+                    return
             num = random.randint(1, sides)
             c.privmsg(self.channel, "It's " + str(num))
 
@@ -450,17 +477,17 @@ class RoboBoboBot(irc.bot.SingleServerIRCBot):
         elif cmd == 'f':
             c.privmsg(self.channel, 'Press F to pay respects BibleThump')
         elif cmd == "schedule":           
-            c.privmsg(self.channel, "Hah! You think Rohan has an actual streaming schedule?")
+            c.privmsg(self.channel, "Hah! You think Rohan has an actual streaming schedule? LOL Join the xRohanTV discord (!Discord) to be in the know :)")
         elif cmd == 'cap':
             c.privmsg(self.channel, "That's CAP! 🧢🧢🧢")
         elif cmd == 'gone':
             c.privmsg(self.channel, '🦀🦀🦀 ROHAN IS GONE 🦀🦀🦀')
-        elif cmd == 'pog':
+        elif cmd == 'pog' or cmd == 'poggers':
             c.privmsg(self.channel, 'POGGERS PogChamp PogChamp PogChamp PogChamp PogChamp PogChamp PogChamp PogChamp PogChamp PogChamp PogChamp PogChamp PogChamp PogChamp')
         elif cmd == 'cheese':
             c.privmsg(self.channel, '🧀🧀🧀 THATS SOME CHEESE🧀🧀🧀 https://www.twitch.tv/xrohantv/clip/CrepuscularExuberantShrewPoooound')
         elif cmd == 'cheeseless':
-            c.privmsg(self.channel, 'Your prayers to The Cheese god remain unanswered... BibleThump https://clips.twitch.tv/AcceptableHorribleAmazonStrawBeary-wAZaHhkwkKh0xmLK')
+            c.privmsg(self.channel, 'Your prayers to The Cheese God remain unanswered... BibleThump https://clips.twitch.tv/AcceptableHorribleAmazonStrawBeary-wAZaHhkwkKh0xmLK')
         elif cmd == 'defeat':
             c.privmsg(self.channel, 'Remember Rohan, Hesitation is Defeat')
         elif cmd == 'djkhaled' or cmd == 'khaled' or cmd == 'onemore':
@@ -476,9 +503,9 @@ class RoboBoboBot(irc.bot.SingleServerIRCBot):
         elif cmd == 'pmg' or cmd == 'poomg':
             c.privmsg(self.channel, 'Poops McGee Strikes Again!')
         #cmd for list of current commands
-        elif cmd == 'cmds':
-            c.privmsg(self.channel, 'The current commands are: game, title, deaths, discord, schedule, F, cap, gone, pog, cheese, plague <#>')
-            c.privmsg(self.channel, 'Mod only commands are: ad <30/60/90...>, deaths +, deaths undo, deaths set <#>')
+        elif cmd == 'help':
+            c.privmsg(self.channel, 'The current commands are: ad, game, title, death, song, discord, uptime, giveaway, schedule, coin, dice <#>, F, CAP, POG')
+            c.privmsg(self.channel, 'You can type help after certain commands to get more info (ex: !ad help)')
         # The command was not recognized
         else:
             print("Did not understand command: " + cmd)
