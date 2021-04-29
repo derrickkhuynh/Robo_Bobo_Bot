@@ -54,7 +54,29 @@ if hasattr(sys, "frozen"):
     requests.utils.DEFAULT_CA_BUNDLE_PATH = override_where()
     requests.adapters.DEFAULT_CA_BUNDLE_PATH = override_where()
 
-class RoboBoboBot(irc.bot.SingleServerIRCBot):
+#helper function to unsplit args
+def concatenateArgs(argsList, starting_index):
+    concatArgs = ""
+    for i in range(starting_index, len(argsList)):
+        concatArgs = concatArgs + argsList[i] + ' '
+    return concatArgs
+
+class YoutubePlaylistManager():
+    def __init__(self):
+        #list of songs in the playlist
+        self.song_names = []
+        self.song_ids = []
+
+        if os.path.exists('ban_songs.pickle'):
+            print('Loading Banned Songs From File...')
+            with open('ban_songs.pickle', 'rb') as token:
+                self.banned_songs = pickle.load(token)
+        else:
+            self.banned_songs = []
+
+        self.yt_authorization()
+        
+
     #conduct youtube authorization and return a youtube object to conduct calls with
     #the credentials are not stored as a class var (only local var) for safety and are deleted after initialization
     def yt_authorization(self):
@@ -87,7 +109,118 @@ class RoboBoboBot(irc.bot.SingleServerIRCBot):
         api_service_name = "youtube"
         api_version = "v3"
         self.youtube = googleapiclient.discovery.build(api_service_name, api_version, credentials=yt_credentials)
+
+    #using the search term, search for the top result from youtube, and get it's song id and name, then add it to the queue
+    def searchSong(self, search_term):
+        request = self.youtube.search().list(part="snippet", maxResults=1, q=search_term)
+        response = request.execute()  #request top result from youtube
+        try:
+            req_song_id = response['items'][0]['id']['videoId']
+            song_name = response['items'][0]['snippet']['title'] 
+        except:
+            req_song_id = None
+            song_name = None
+        return song_name, req_song_id
+
+    #using the song id, add it to the youtube playlist
+    def queueSong(self, request_song_id):
+        request = self.youtube.playlistItems().insert(part="snippet", body={"snippet": {
+            "playlistId": "PLpKWYssZZaRkwTiqBCEytDUNySoREGTPf",
+            "position": 100, #arbitrarily set position to 100 to add to end of playlist
+            "resourceId": {
+              "kind": "youtube#video",
+              "videoId": request_song_id
+            }
+          }})
+        response = request.execute()
+        song_name = response['snippet']['title']
+        print('Queueing song: ' + song_name)
+        return song_name
     
+    #update the bot's local list of songs
+    def updateSongList(self):
+        request = self.youtube.playlistItems().list(part="snippet", maxResults=50, playlistId="PLpKWYssZZaRkwTiqBCEytDUNySoREGTPf")
+        response = request.execute()
+
+        #delete any previous info (may be outdated)
+        self.song_ids = []
+        self.song_names = []
+        for x in range(0, len(response['items'])): 
+            self.song_ids.append(response['items'][x]['id'])
+            self.song_names.append(response['items'][x]['snippet']['title'])
+    
+    def parseSongRequest(self, req_song):
+        song_name = ""
+        if len(req_song) == 1: #check for !songs play/request/queue without search term
+            return "Please provide valid youtube link or song name"
+
+        #if more than 1 word song search, then it's not a link so search it
+        elif len(req_song) > 2: #searching for song name
+            search_term = concatenateArgs(req_song, 1)
+            req_song_name, video_id = self.searchSong(search_term)
+
+        else: #either has a link, song_id, or a single term search phrase
+            url_data = urlparse.urlparse(req_song[1]) #check if it's a link, then parse the id from it
+            if url_data[1] == 'www.youtube.com':
+                query = urlparse.parse_qs(url_data.query)
+                video_id = query["v"][0]
+                print('Video ID = ' + video_id)
+                req_song_name, video_id = self.searchSong(video_id) #searching the song id returns it on top result
+
+            elif url_data[1] == 'youtu.be':
+                video_id = url_data[2][1:]
+                print('Video ID = ' + video_id)
+                req_song_name, video_id = self.searchSong(video_id)
+
+            else: #if it was not a link, search for the term (YT will return first search result - Searching ID works)
+                req_song_name, video_id = self.searchSong(req_song[1])
+
+        self.updateSongList()
+        if req_song_name in self.song_names: #if song is already inside the playlist
+            return 'Song is already in the playlist'
+        #check if song is in banned_songs list
+        elif req_song_name in self.banned_songs:
+            return 'Song is banned lol :p'
+        else:
+            song_name = self.queueSong(video_id)
+            self.updateSongList()
+            return 'Queued: ' + song_name
+
+    #using song id, remove it from the playlist
+    def deleteSong(self, req_del_args):
+        self.updateSongList()                           #get an updated list of songs
+        search_term = concatenateArgs(req_del_args, 1) 
+        del_song_name, _ = self.searchSong(search_term) #get the name of the video through search
+        print('Trying to delete: ' + del_song_name)
+        try: #if the song is in the list (no error caught), then delete it
+            index = self.song_names.index(del_song_name)    #find the name inside the list of song_names and its index
+            del_song_id = self.song_ids[index]              #find the playlist item ID using the index ^
+            request = self.youtube.playlistItems().delete(id = del_song_id)
+            request.execute()                    #delete the song using a delete request
+            return 'Deleted: ' + del_song_name
+        except:
+            return 'Could not delete the video - Video not found'
+
+    def banSong(self, req_song):
+        self.updateSongList()                           #get an updated list of songs
+        search_term = concatenateArgs(req_song, 1)
+        ban_song_name, _ = self.searchSong(search_term) #get the name of the video through search
+        if not(ban_song_name in self.banned_songs):      #if its not already in the banned list
+            print('Banned: ' + ban_song_name)
+            self.banned_songs.append(ban_song_name)
+            self.updateSongList()
+
+            with open('ban_songs.pickle', 'wb') as f:
+                print('Saving banned songs for Future Use...')
+                pickle.dump(self.banned_songs, f)
+
+            return 'Banned: ' + ban_song_name
+        else:
+            return ban_song_name + ' is already banned'  
+
+
+
+class RoboBoboBot(irc.bot.SingleServerIRCBot):
     def tw_authentication(self):
         #check if previously given access token is stored
         if os.path.exists('tw_token.pickle'):
@@ -144,11 +277,6 @@ class RoboBoboBot(irc.bot.SingleServerIRCBot):
         self.giveaway_entries = []
         self.giveaway_on = False
 
-        #list of songs in the playlist
-        self.song_names = []
-        self.song_ids = []
-        self.banned_songs = []
-
         #dict to store simple commands, with loading
         if os.path.exists('cmds.pickle'):
             print('Loading Commands From File...')
@@ -158,8 +286,10 @@ class RoboBoboBot(irc.bot.SingleServerIRCBot):
         else:
             self.cmds = {}
 
-        # Youtube Authentication
-        self.yt_authorization()
+        # Create Youtube Playlist Manager for itself
+        self.yt = YoutubePlaylistManager()
+
+        # Authenticate through Twitch
         self.tw_authentication()
 
         # Create IRC bot connection
@@ -168,50 +298,7 @@ class RoboBoboBot(irc.bot.SingleServerIRCBot):
         print('Connecting to ' + server + ' on port ' + str(port) + '...')
         irc.bot.SingleServerIRCBot.__init__(self, [(server, port, 'oauth:'+os.getenv('BOT_OAUTH_TOKEN'))], self.username, self.username)
 
-    #using the search term, search for the top result from youtube, and get it's song id and name, then add it to the queue
-    def searchSong(self, search_term):
-        request = self.youtube.search().list(part="snippet", maxResults=1, q=search_term)
-        response = request.execute()  #request top result from youtube
-        try:
-            req_song_id = response['items'][0]['id']['videoId']
-            song_name = response['items'][0]['snippet']['title'] 
-        except:
-            req_song_id = None
-            song_name = None
-        return song_name, req_song_id
-
-    #using the song id, add it to the youtube playlist
-    def queueSong(self, request_song_id):
-        request = self.youtube.playlistItems().insert(part="snippet", body={"snippet": {
-            "playlistId": "PLpKWYssZZaRkwTiqBCEytDUNySoREGTPf",
-            "position": 100, #arbitrarily set position to 100 to add to end of playlist
-            "resourceId": {
-              "kind": "youtube#video",
-              "videoId": request_song_id
-            }
-          }})
-        response = request.execute()
-        song_name = response['snippet']['title']
-        print('Queueing song: ' + song_name)
-        return song_name
     
-    #update the bot's local list of songs
-    def updateSongList(self):
-        request = self.youtube.playlistItems().list(part="snippet", maxResults=50, playlistId="PLpKWYssZZaRkwTiqBCEytDUNySoREGTPf")
-        response = request.execute()
-
-        #delete any previous info (may be outdated)
-        self.song_ids = []
-        self.song_names = []
-        for x in range(0, len(response['items'])): 
-            self.song_ids.append(response['items'][x]['id'])
-            self.song_names.append(response['items'][x]['snippet']['title'])
-    
-    #using song id, remove it from the playlist
-    def deleteSong(self, del_song_id):
-        request = self.youtube.playlistItems().delete(id = del_song_id)
-        request.execute()
-
     def repeatMsg(self, message, arg_length = 1):
         c = self.connection
         if int(arg_length) > 5:
@@ -226,12 +313,6 @@ class RoboBoboBot(irc.bot.SingleServerIRCBot):
         c = self.connection
         if 'bigfollows' in message:
             c.privsmsg(self.channel, '/ban %s' %(name))
-
-    def concatenateArgs(self, argsList, starting_index):
-        concatArgs = ""
-        for i in range(starting_index, len(argsList)):
-            concatArgs = concatArgs + argsList[i] + ' '
-        return concatArgs
 
     #if the cmd is within the split list, return the key for that item
     def findExistingCmd(self, cmd):
@@ -295,6 +376,8 @@ class RoboBoboBot(irc.bot.SingleServerIRCBot):
         #allow for simple commands without '!' prefix
         elif e.arguments[0].lower() == 'f':
             c.privmsg(self.channel, 'Press F to pay respects BibleThump')
+        
+        #call the spam detection function for every message
         self.spamDetection(e.arguments[0], name)
         return
 
@@ -394,66 +477,16 @@ class RoboBoboBot(irc.bot.SingleServerIRCBot):
             elif args[0] == 'help':
                 c.privmsg(self.channel, 'To request a song, use the song request channel points reward and type: "!song request <link or song name>"')
             elif args[0] == 'play' or args[0] == 'request' or args[0] == 'queue':
-                song_name = ""
-                if len(args) == 1: #check for !songs play/request/queue without search term
-                    c.privmsg(self.channel, "Please provide valid youtube link or song name")
-                    return
-                elif len(args) > 2: #searching for song name
-                    search_term = self.concatenateArgs(args, 1)
-                    req_song_name, video_id = self.searchSong(search_term)
-                else: #either has a link, song_id, or a single term search phrase
-                    url_data = urlparse.urlparse(args[1]) #check if it's a link, then parse the id from it
-                    if url_data[1] == 'www.youtube.com':
-                        query = urlparse.parse_qs(url_data.query)
-                        video_id = query["v"][0]
-                        print('Video ID = ' + video_id)
-                        req_song_name, video_id = self.searchSong(video_id) #searching the song id returns it on top result
-                    elif url_data[1] == 'youtu.be':
-                        video_id = url_data[1][1:]
-                        print('Video ID = ' + video_id)
-                        req_song_name, video_id = self.searchSong(video_id)
-                    else: #if it was not a link, search for the term (YT will return first search result - Searching ID works)
-                        req_song_name, video_id = self.searchSong(args[1])
-                self.updateSongList()
-                if req_song_name in self.song_names: #if song is already inside the playlist
-                    c.privmsg(self.channel, 'Song is already in the playlist')
-                    return
-                elif req_song_name in self.banned_songs:
-                    c.privmsg(self.channel, 'Song is banned lol :p')
-                    return
-                else:
-                    song_name = self.queueSong(video_id)
-                    message = 'Queued: ' + song_name
-                    c.privmsg(self.channel, message)
-                    self.updateSongList()
+                response = self.yt.parseSongRequest(args)
+                c.privmsg(self.channel, response)
             elif args[0] == 'delete': #params: position, deletes the song at pos
                 if mod:
-                    search_term = ""
-                    self.updateSongList()                           #get an updated list of songs
-                    for i in range(1, len(args)): #concatenate search term
-                        search_term = search_term + args[i] + ' '
-                    del_song_name, _ = self.searchSong(search_term) #get the name of the video through search
-                    print('Trying to delete: ' + del_song_name)
-                    try: #if the song is in the list (no error caught), then delete it
-                        index = self.song_names.index(del_song_name)    #find the name inside the list of song_names and its index
-                        del_song_id = self.song_ids[index]              #find the playlist item ID using the index ^
-                        self.deleteSong(del_song_id)                    #delete the song using a delete request
-                        c.privmsg(self.channel, 'Deleted: ' + del_song_name)
-                    except:
-                        c.privmsg(self.channel, 'Could not delete the video - Video not found')
-                        return
+                    response = self.yt.deleteSong(args)
+                    c.privmsg(self.channel, response)
             elif args[0] == 'ban':      
                 if mod:
-                    self.updateSongList()                           #get an updated list of songs
-                    search_term = self.concatenateArgs(args, 1)
-                    ban_song_name, _ = self.searchSong(search_term) #get the name of the video through search
-                    if not(ban_song_name in self.banned_songs):      #if its not already in the banned list
-                        print('Banned: ' + ban_song_name)
-                        self.banned_songs.append(ban_song_name)
-                        c.privmsg(self.channel, 'Banned: ' + ban_song_name)
-                        self.updateSongList()
-                    else:
-                        c.privsmsg(self.channel, ban_song_name + ' is already banned')
+                    response = self.yt.banSong(args)
+                    c.privmsg(self.channel, response)
 
         #Raffle or Giveaway system
         elif cmd == 'raffle' or cmd == 'giveaway':
@@ -552,11 +585,11 @@ class RoboBoboBot(irc.bot.SingleServerIRCBot):
                         #use helper function to find if given search term is part of an existing command
                         existingCmd = self.findExistingCmd(args[1])
                         #if it is, then update that dict value with the concatenated command response
-                        self.cmds[existingCmd] = self.concatenateArgs(args, 2)
+                        self.cmds[existingCmd] = concatenateArgs(args, 2)
                         c.privmsg(self.channel, '!' + existingCmd + ' has been updated.')
                     except:
                         #if it's not an existing command (Exception raised by findExistingCmd), then add it to the dict
-                        self.cmds[args[1]] = self.concatenateArgs(args, 2)
+                        self.cmds[args[1]] = concatenateArgs(args, 2)
                         c.privmsg(self.channel, '!' + args[1] + ' has been added.')
                 else:
                     print('Invalid Request/ Not a mod')
