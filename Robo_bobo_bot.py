@@ -18,14 +18,14 @@ from pip._vendor import requests
 from datetime import datetime
 from dateutil import parser
 from dateutil import tz
-
+#import separate youtube module for playlists
 import yt_Module
 
 #API scopes
-tw_scopes = '&channel:edit:commercial%20channel:manage:redemptions'
+TW_SCOPES = '&channel:edit:commercial%20channel:manage:redemptions'
 
 #discord join link
-discord_link = 'https://discord.gg/Za5ngC9QsE'
+DISCORD_LINK = 'https://discord.gg/Za5ngC9QsE'
 
 #some necessary functions to allow for pyinstaller (it's a bug with requests)
 def override_where():
@@ -69,7 +69,7 @@ class RoboBoboBot(irc.bot.SingleServerIRCBot):
 
     #if token is expired, request a new token using the refresh token
     def refresh_token(self):
-        url = 'https://id.twitch.tv/oauth2/token?grant_type=refresh_token&refresh_token='+os.getenv('TW_REFRESH_TOKEN')+'&client_id='+self.client_id+'&client_secret='+os.getenv('TWITCH_CLIENT_SECRET')+'&scope='+tw_scopes
+        url = 'https://id.twitch.tv/oauth2/token?grant_type=refresh_token&refresh_token='+os.getenv('TW_REFRESH_TOKEN')+'&client_id='+self.client_id+'&client_secret='+os.getenv('TWITCH_CLIENT_SECRET')+'&scope='+TW_SCOPES
         r = requests.post(url).json()
         if 'access_token' in r:
             self.token = r['access_token']
@@ -182,7 +182,7 @@ class RoboBoboBot(irc.bot.SingleServerIRCBot):
         hours = int(time_difference[0]) #get number of hours since last validation
         if hours > 1:
             self.validateToken()
-            c.privmsg(self.channel, 'Join the xRohanTV community discord at: ' + discord_link)
+            c.privmsg(self.channel, 'Join the xRohanTV community discord at: ' + DISCORD_LINK)
             self.time_last_checked = current_time
 
         mod = False
@@ -346,7 +346,7 @@ class RoboBoboBot(irc.bot.SingleServerIRCBot):
             
         #plug discord server
         elif cmd == 'discord' or cmd == 'socials':
-            c.privmsg(self.channel, 'Join the xRohanTV community discord at: ' + discord_link)
+            c.privmsg(self.channel, 'Join the xRohanTV community discord at: ' + DISCORD_LINK)
 
         #find current uptime
         elif cmd == 'uptime':

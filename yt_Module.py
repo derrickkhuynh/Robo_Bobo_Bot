@@ -9,7 +9,8 @@ import googleapiclient.discovery
 import googleapiclient.errors
 
 #scopes
-yt_scopes = ["https://www.googleapis.com/auth/youtube.force-ssl"]
+YT_SCOPES = ["https://www.googleapis.com/auth/youtube.force-ssl"]
+PLAYLIST_ID = "PLpKWYssZZaRkwTiqBCEytDUNySoREGTPf"
 
 #helper function to unsplit args
 def concatenateArgs(argsList, starting_index):
@@ -53,7 +54,7 @@ class YoutubePlaylistManager():
             else:
                 print('Fetching New Tokens...')
                 client_secrets_file = "client_id.json"
-                flow = google_auth_oauthlib.flow.InstalledAppFlow.from_client_secrets_file(client_secrets_file, yt_scopes)
+                flow = google_auth_oauthlib.flow.InstalledAppFlow.from_client_secrets_file(client_secrets_file, YT_SCOPES)
                 flow.run_local_server(port=8080, prompt='consent',
                                     authorization_prompt_message='')
                 yt_credentials = flow.credentials
@@ -82,7 +83,7 @@ class YoutubePlaylistManager():
     #using the song id, add it to the youtube playlist
     def queueSong(self, request_song_id):
         request = self.youtube.playlistItems().insert(part="snippet", body={"snippet": {
-            "playlistId": "PLpKWYssZZaRkwTiqBCEytDUNySoREGTPf",
+            "playlistId": PLAYLIST_ID,
             "position": 100, #arbitrarily set position to 100 to add to end of playlist
             "resourceId": {
               "kind": "youtube#video",
@@ -96,7 +97,7 @@ class YoutubePlaylistManager():
     
     #update the bot's local list of songs
     def updateSongList(self):
-        request = self.youtube.playlistItems().list(part="snippet", maxResults=50, playlistId="PLpKWYssZZaRkwTiqBCEytDUNySoREGTPf")
+        request = self.youtube.playlistItems().list(part="snippet", maxResults=50, playlistId = PLAYLIST_ID)
         response = request.execute()
 
         #delete any previous info (may be outdated)
