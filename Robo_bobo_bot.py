@@ -3,12 +3,13 @@
 # !topbits
 # allow for channel points to request a song
 # banned words filter: if a user says a banned word, then robo bobo will ban them from the chat
-
+# Shoutout @name to say thanks etc.
 #To run the bot, click the green run button on the top right 
 
 import os
 import sys
 import pickle
+import json
 from dotenv import load_dotenv
 import random
 #twitch bot imports
@@ -105,7 +106,8 @@ class RoboBoboBot(irc.bot.SingleServerIRCBot):
         self.channel = '#xrohantv'
 
         #time vars
-        self.time_last_checked = datetime.now(tz.UTC)
+        self.last_hourly_check = datetime.now(tz.UTC)
+        self.last_ad_run = datetime.now(tz.UTC)
         self.start_time = None
 
         #giveaway trackers
@@ -165,10 +167,30 @@ class RoboBoboBot(irc.bot.SingleServerIRCBot):
                     print(self.cmds)
         #if nothing was found, raise an exception
         raise Exception('Command Not Found')
-        
+
+    def runAd(self, req_length):
+        if req_length != None: #round their given length
+            try:
+                length = round(int(req_length[0])/30)*30 #div by 30 then round to nearest number, then *30 to get multiple of 30 length
+                if length > 180: #if length is greater than max length (3 mins), then set to 3 mins
+                    length = 180
+            except:
+                c.privmsg(self.channel, 'Please input a valid ad length')
+                return
+        url = 'https://api.twitch.tv/helix/channels/commercial' 
+        headers = {'Client-Id': self.client_id, 'Content-Type': 'application/json',  'Authorization': 'Bearer ' + self.token}
+        raw_data = '{ "broadcaster_id": "%s", "length": %d }' %(self.channel_id, length)
+        r = requests.post(url, data=raw_data, headers=headers).json()
+        try:
+            length = test['data'][0]['length']
+            c.privmsg(self.channel, 'Running a %d sec ad' %length) 
+        except:
+            self.refresh_token()
+            self.do_command(e, cmd, args, mod, name)
+
     def on_welcome(self, c, e):
         print('Joining ' + self.channel)
-
+        print(self.channel_id)
         # You must request specific capabilities before you can use them
         c.cap('REQ', ':twitch.tv/membership')
         c.cap('REQ', ':twitch.tv/tags')
@@ -177,13 +199,16 @@ class RoboBoboBot(irc.bot.SingleServerIRCBot):
 
     def on_pubmsg(self, c, e):
         current_time = datetime.now(tz.UTC)
-        #find the time difference
-        time_difference = str(current_time - self.time_last_checked).split(':')
-        hours = int(time_difference[0]) #get number of hours since last validation
-        if hours > 1:
+        #find the time difference, the difference would be a HH:MM:SS string, so split it by ':' to get a HH, MM, SS list.
+        hour_difference = str(current_time - self.last_hourly_check).split(':')
+        time_since_last_ad = str(current_time - self.last_ad_run).split(':')
+        #get difference[0] would be hours, [1] = minutes, [2] = seconds
+        if int(hour_difference[0]) > 1:
             self.validateToken()
             c.privmsg(self.channel, 'Join the xRohanTV community discord at: ' + DISCORD_LINK)
-            self.time_last_checked = current_time
+            self.last_hourly_check = current_time
+        if int(time_since_last_ad[1]) > 45: #if it's been 45 minutes since last ad was run, run a 60 sec ad.
+            self.runAd(60)
 
         mod = False
         #get the name of the chatter
@@ -282,26 +307,10 @@ class RoboBoboBot(irc.bot.SingleServerIRCBot):
             if mod:
                 if args[0] == 'help':
                     c.privmsg(self.channel, '(Mod Only) Send !ad <length> to request an ad. Length can be 30/60/90/120/150/180.')
-                elif args != None: #round their given length
-                    try:
-                        length = round(int(args[0])/30)*30 #div by 30 then round to nearest number, then *30 to get multiple of 30 length
-                        if length > 180: #if length is greater than max length (3 mins), then set to 3 mins
-                            length = 180
-                    except:
-                        c.privmsg(self.channel, 'Please input a valid ad length')
-                        return
+                elif args != None:
+                    self.runAd(args)
                 else:  #if no length given, default to 60 sec
-                    length = 60
-                url = 'https://api.twitch.tv/helix/channels/commercial' 
-                headers = {'Client-Id': self.client_id, 'Content-Type': 'application/json',  'Authorization': 'Bearer ' + self.token}
-                raw_data = '{ "broadcaster_id": "%s", "length": %d }' %(self.channel_id, length)
-                r = requests.post(url, data=raw_data, headers=headers).json()
-                try:
-                    length = test['data'][0]['length']
-                    c.privmsg(self.channel, 'Running a %d sec ad' %length) 
-                except:
-                    self.refresh_token()
-                    self.do_command(e, cmd, args, mod, name)
+                    self.runAd(60)
             else:
                 c.privmsg(self.channel, 'This is a mod only command')
 
@@ -402,8 +411,8 @@ class RoboBoboBot(irc.bot.SingleServerIRCBot):
             if args == None:
                 return
             elif args[0] == 'help':
-                c.privmsg(self.channel, 'To add or edit commands, type !cmd add/edit <command_name/alt_name/alt_name_2> <command response>. If you edit 1 command, you will also edit all alt commands. Note: Command names must be 1 word.')
-                c.privmsg(self.channel, "To delete a command, type !cmd delete <command_name>. It'll automatically find any alt names and delete them too.")
+                c.privmsg(self.channel, 'To add or edit commands, type !cmd add/edit <command_name/alt_name> <command response>. Note: Command names must be 1 word.')
+                c.privmsg(self.channel, "To delete a command, type !cmd delete <command_name>. It'll also delete any alt names for that command.")
                 c.privmsg(self.channel, "Type !cmd list to get a list of the current simple commands.")
 
             #list out current commands
