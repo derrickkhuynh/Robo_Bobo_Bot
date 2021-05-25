@@ -4,6 +4,7 @@
 # allow for channel points to request a song
 # banned words filter: if a user says a banned word, then robo bobo will ban them from the chat
 # Shoutout @name to say thanks etc.
+# Use custom reward API to do song requests?
 #To run the bot, click the green run button on the top right 
 
 import os
@@ -20,10 +21,12 @@ from datetime import datetime
 from dateutil import parser
 from dateutil import tz
 #import separate youtube module for playlists
-import yt_Module
+from youtube import yt_Module
+from helper import helper_Module as hp
 
 #API scopes
-TW_SCOPES = '&channel:edit:commercial%20channel:manage:redemptions'
+TW_SCOPES = ['channel:edit:commercial','channel:manage:redemptions','channel:read:redemptions','channel:manage:polls','channel:manage:predictions']
+#TW_SCOPES = ['']
 
 #discord join link
 DISCORD_LINK = 'https://discord.gg/Za5ngC9QsE'
@@ -49,40 +52,66 @@ if hasattr(sys, "frozen"):
     requests.utils.DEFAULT_CA_BUNDLE_PATH = override_where()
     requests.adapters.DEFAULT_CA_BUNDLE_PATH = override_where()
 
-#helper function to unsplit args
-def concatenateArgs(argsList, starting_index):
-    concatArgs = ""
-    for i in range(starting_index, len(argsList)):
-        concatArgs = concatArgs + argsList[i] + ' '
-    return concatArgs
-
 class RoboBoboBot(irc.bot.SingleServerIRCBot):
     def tw_authentication(self):
         #check if previously given access token is stored
-        if os.path.exists('tw_token.pickle'):
+        if os.path.exists(self.name+'/tw_token.pickle'):
             print('Loading Twitch Access Token From File...')
-            with open('tw_token.pickle', 'rb') as token:
-                self.token = pickle.load(token)
+            with open(self.name+'/tw_token.pickle', 'rb') as token:
+                try:
+                    self.token, self.refresh_token = pickle.load(token)
+                except:
+                    self.reAuthenticate()
+            if self.refresh_token == None or self.token == None:
+                self.reAuthenticate()
             #once we got the previously gotten token, send a validation request to twitch to see if its still active
             self.validateToken()
         else:
-            self.refresh_token()
-
-    #if token is expired, request a new token using the refresh token
-    def refresh_token(self):
-        url = 'https://id.twitch.tv/oauth2/token?grant_type=refresh_token&refresh_token='+os.getenv('TW_REFRESH_TOKEN')+'&client_id='+self.client_id+'&client_secret='+os.getenv('TWITCH_CLIENT_SECRET')+'&scope='+TW_SCOPES
+            self.refreshToken()
+            self.validateToken()
+    
+    def reAuthenticate(self):
+        print('Follow link: ')
+        url = 'https://id.twitch.tv/oauth2/authorize?client_id='+self.client_id+'&redirect_uri=http://localhost&response_type=code&scope='+self.req_scopes
+        print(url)
+        auth_code = input('Enter Authorization Code')
+        url = 'https://id.twitch.tv/oauth2/token?client_id='+self.client_id+'&client_secret='+os.getenv('TWITCH_CLIENT_SECRET')+'&code='+auth_code+'&grant_type=authorization_code&redirect_uri=http://localhost'
         r = requests.post(url).json()
-        if 'access_token' in r:
+        if 'access_token' in r and 'refresh_token' in r:
             self.token = r['access_token']
+            self.refresh_token = r['refresh_token']
             print('New Twitch Access Token Granted')
 
             # Save the credentials for the next run
-            with open('tw_token.pickle', 'wb') as f:
+            with open(self.name+'/tw_token.pickle', 'wb') as f:
                 print('Saving Twitch Credentials for Future Use...')
-                pickle.dump(self.token, f)
+                pickle.dump([self.token, self.refresh_token], f)
         else: #if failed, exit
-            print('Refresh request failed')
+            print('Reauthentication failed')
             exit()
+    #if token is expired, request a new token using the refresh token
+    def refreshToken(self):
+        if self.refresh_token == None or self.token == None:
+            self.reAuthenticate()
+        else:
+            url = 'https://id.twitch.tv/oauth2/token?grant_type=refresh_token&refresh_token='+self.refresh_token+'&client_id='+self.client_id+'&client_secret='+os.getenv('TWITCH_CLIENT_SECRET')+'&scope='+self.req_scopes
+            r = requests.post(url).json()
+            print(r)
+            #if the scope in the current access token is not the same as the requested scopes, reauthenticate
+            if 'scope' in r and r['scope'] != TW_SCOPES:
+                self.reAuthenticate()
+            elif 'access_token' in r and 'refresh_token' in r:
+                self.token = r['access_token']
+                self.refresh_token = r['refresh_token']
+                print('New Twitch Access Token Granted')
+
+                # Save the credentials for the next run
+                with open(self.name+'/tw_token.pickle', 'wb') as f:
+                    print('Saving Twitch Credentials for Future Use...')
+                    pickle.dump([self.token, self.refresh_token], f)
+            else: #if failed, exit
+                print('Refresh request failed')
+                exit()
 
     #for validating the token
     def validateToken(self):
@@ -93,17 +122,21 @@ class RoboBoboBot(irc.bot.SingleServerIRCBot):
         #if the response from the validation request is not 200, then refresh the access token and validate again
         if not(r.ok):
             print('Oauth Token not valid')
-            self.refresh_token()
+            self.refreshToken()
             self.validateToken()
+        else:
+            self.channel = '#'+r.json()['login']
+            self.channel_id = r.json()['user_id']
 
-    def __init__(self):
+    def __init__(self, input_name = 'rohan'):
         #load env stuff
         load_dotenv()
         self.username = 'robo_bobo_bot'
         self.death_counter = 0
         self.client_id = os.getenv('TWITCH_CLIENT_ID')
-        self.channel_id = os.getenv('XROHANTV_ID')
-        self.channel = '#xrohantv'
+        self.channel_id = None
+        self.channel = None
+        self.name = input_name
 
         #time vars
         self.last_hourly_check = datetime.now(tz.UTC)
@@ -115,9 +148,11 @@ class RoboBoboBot(irc.bot.SingleServerIRCBot):
         self.giveaway_on = False
 
         #dict to store simple commands, with loading
-        if os.path.exists('cmds.pickle'):
+        if not(os.path.isdir(self.name)):
+            os.mkdir(self.name)
+        if os.path.exists(self.name+'/cmds.pickle'):
             print('Loading Commands From File...')
-            with open('cmds.pickle', 'rb') as token:
+            with open(self.name+'/cmds.pickle', 'rb') as token:
                 self.cmds = pickle.load(token)
             print('Loaded Commands: ' + ', '.join(map(str, list(self.cmds.keys()))))
         else:
@@ -127,6 +162,9 @@ class RoboBoboBot(irc.bot.SingleServerIRCBot):
         self.yt = yt_Module.YoutubePlaylistManager()
 
         # Authenticate through Twitch
+        self.req_scopes = hp.concatenateArgs(TW_SCOPES, 0, '%20')
+        self.token = None
+        self.refresh_token = None
         self.tw_authentication()
 
         # Create IRC bot connection
@@ -136,14 +174,14 @@ class RoboBoboBot(irc.bot.SingleServerIRCBot):
         irc.bot.SingleServerIRCBot.__init__(self, [(server, port, 'oauth:'+os.getenv('BOT_OAUTH_TOKEN'))], self.username, self.username)
 
     
-    def repeatMsg(self, message, arg_length = 1):
-        c = self.connection
-        if int(arg_length) > 5:
-            length = 5
-        else:
-            length = int(arg_length)
-        for _ in range(0, length):
-            c.privmsg(self.channel, message)
+    # def repeatMsg(self, message, arg_length = 1):
+    #     c = self.connection
+    #     if int(arg_length) > 5:
+    #         length = 5
+    #     else:
+    #         length = int(arg_length)
+    #     for _ in range(0, length):
+    #         c.privmsg(self.channel, message)
     
     #allows for detection of bigfollows and tries to ban the user
     def spamDetection(self, message, name):
@@ -169,9 +207,11 @@ class RoboBoboBot(irc.bot.SingleServerIRCBot):
         raise Exception('Command Not Found')
 
     def runAd(self, req_length):
+        c = self.connection
         if req_length != None: #round their given length
+            length = req_length.split(' ')[0]
             try:
-                length = round(int(req_length[0])/30)*30 #div by 30 then round to nearest number, then *30 to get multiple of 30 length
+                length = round(int(length)/30)*30 #div by 30 then round to nearest number, then *30 to get multiple of 30 length
                 if length > 180: #if length is greater than max length (3 mins), then set to 3 mins
                     length = 180
             except:
@@ -180,17 +220,15 @@ class RoboBoboBot(irc.bot.SingleServerIRCBot):
         url = 'https://api.twitch.tv/helix/channels/commercial' 
         headers = {'Client-Id': self.client_id, 'Content-Type': 'application/json',  'Authorization': 'Bearer ' + self.token}
         raw_data = '{ "broadcaster_id": "%s", "length": %d }' %(self.channel_id, length)
-        r = requests.post(url, data=raw_data, headers=headers).json()
-        try:
-            length = test['data'][0]['length']
+        r = requests.post(url, data=raw_data, headers=headers)
+        if(r.ok):
+            length = r['data'][0]['length']
             c.privmsg(self.channel, 'Running a %d sec ad' %length) 
-        except:
-            self.refresh_token()
-            self.do_command(e, cmd, args, mod, name)
+        else:
+            c.privmsg(self.channel, 'Ad failed :(')
 
     def on_welcome(self, c, e):
         print('Joining ' + self.channel)
-        print(self.channel_id)
         # You must request specific capabilities before you can use them
         c.cap('REQ', ':twitch.tv/membership')
         c.cap('REQ', ':twitch.tv/tags')
@@ -208,7 +246,7 @@ class RoboBoboBot(irc.bot.SingleServerIRCBot):
             c.privmsg(self.channel, 'Join the xRohanTV community discord at: ' + DISCORD_LINK)
             self.last_hourly_check = current_time
         if int(time_since_last_ad[1]) > 45: #if it's been 45 minutes since last ad was run, run a 60 sec ad.
-            self.runAd(60)
+            self.runAd('60')
 
         mod = False
         #get the name of the chatter
@@ -223,7 +261,7 @@ class RoboBoboBot(irc.bot.SingleServerIRCBot):
             cmd = e.arguments[0].split(' ')[0][1:]
             #check if user is a mod
             for _, value in e.tags[-1].items():
-                if value == 'mod' or name == 'xrohantv':
+                if value == 'mod' or name == self.channel[1:]:
                     mod = True
             if args != None:
                 print('Received command: ' + cmd + ' ' + args[0])
@@ -275,7 +313,7 @@ class RoboBoboBot(irc.bot.SingleServerIRCBot):
         #death counter commands
         elif cmd == "deaths" or cmd == 'death':
             if args == None:
-                message = "Rohan has died %d times. What a loser!" %int(self.death_counter)
+                message = self.name + " has died %d times. What a loser!" %int(self.death_counter)
                 c.privmsg(self.channel, message)
             elif args[0] == 'help':
                 c.privmsg(self.channel, '!death will provide the current death count, and mods can do !death +/-/set <#>/reset to change the current count')
@@ -283,9 +321,9 @@ class RoboBoboBot(irc.bot.SingleServerIRCBot):
                 if mod:
                     self.death_counter = self.death_counter+1
                     if self.death_counter == 69:
-                        message = 'Rohan died 69 times. Nice ;)'
+                        message = self.name + " died 69 times. Nice"
                     else:
-                        message = "Rohan just died. That's death #%d. What a loser!" %int(self.death_counter)
+                        message = self.name + " just died. That's death #%d. What a loser!" %int(self.death_counter)
                     c.privmsg(self.channel, message)
             elif args[0] == "-" or args[0] == 'undo':
                 if mod:
@@ -305,12 +343,13 @@ class RoboBoboBot(irc.bot.SingleServerIRCBot):
         #run an ad
         elif cmd == "ad":
             if mod:
-                if args[0] == 'help':
+                if args == None:
+                    self.runAd('60')
+                elif args[0] == 'help':
                     c.privmsg(self.channel, '(Mod Only) Send !ad <length> to request an ad. Length can be 30/60/90/120/150/180.')
-                elif args != None:
+                else:
                     self.runAd(args)
-                else:  #if no length given, default to 60 sec
-                    self.runAd(60)
+                    
             else:
                 c.privmsg(self.channel, 'This is a mod only command')
 
@@ -359,28 +398,24 @@ class RoboBoboBot(irc.bot.SingleServerIRCBot):
 
         #find current uptime
         elif cmd == 'uptime':
-            url = 'https://api.twitch.tv/helix/search/channels?query=xrohantv'
+            url = 'https://api.twitch.tv/helix/search/channels?query='+self.channel[1:]
             headers = {'Client-Id': self.client_id, 'Authorization': 'Bearer ' + self.token}
             r = requests.get(url, headers=headers).json()
             index = -1
-            try:
-                for i in range(0, len(r['data']) - 1):
-                    if r['data'][i]['broadcaster_login'] == 'xrohantv':
-                        index = i
-                        break
-                if r['data'][index]['started_at'] != "" and index != -1: #check if started at is empty (Rohan isn't streaming), if index = -1, then it couldn't find xRohanTV
-                    self.start_time = parser.parse(r['data'][index]['started_at'])
-                    current_time = datetime.now(tz.UTC)
-                    time_difference = str(current_time - self.start_time).split(':')
-                    hours = time_difference[0]
-                    minutes = time_difference[1]
-                    seconds = time_difference[2][0:2]
-                    c.privmsg(self.channel, "Rohan's been streaming for " + hours + ' hours, ' + minutes + ' minutes, and ' + seconds + ' seconds.')
-                else:
-                    print('Channel is not live')
-            except:
-                self.refresh_token()
-                self.do_command(e, cmd, args, mod, name)
+            for i in range(0, len(r['data']) - 1):
+                if r['data'][i]['broadcaster_login'] == self.channel[1:]:
+                    index = i
+                    break
+            if index != -1 and r['data'][index]['started_at'] != "" : #check if started at is empty (Rohan isn't streaming), if index = -1, then it couldn't find xRohanTV
+                self.start_time = parser.parse(r['data'][index]['started_at'])
+                current_time = datetime.now(tz.UTC)
+                time_difference = str(current_time - self.start_time).split(':')
+                hours = time_difference[0]
+                minutes = time_difference[1]
+                seconds = time_difference[2][0:2]
+                c.privmsg(self.channel, self.name + "'s been running for " + hours + ' hours, ' + minutes + ' minutes, and ' + seconds + ' seconds.')
+            else:
+                c.privmsg(self.channel, 'Channel is not live')
 
         #toss a coin
         elif cmd == 'coin' or cmd == 'coins':
@@ -429,11 +464,11 @@ class RoboBoboBot(irc.bot.SingleServerIRCBot):
                         #use helper function to find if given search term is part of an existing command
                         existingCmd = self.findExistingCmd(args[1])
                         #if it is, then update that dict value with the concatenated command response
-                        self.cmds[existingCmd] = concatenateArgs(args, 2)
+                        self.cmds[existingCmd] = hp.concatenateArgs(args, 2)
                         c.privmsg(self.channel, '!' + existingCmd + ' has been updated.')
                     except:
                         #if it's not an existing command (Exception raised by findExistingCmd), then add it to the dict
-                        self.cmds[args[1]] = concatenateArgs(args, 2)
+                        self.cmds[args[1]] = hp.concatenateArgs(args, 2)
                         c.privmsg(self.channel, '!' + args[1] + ' has been added.')
                 else:
                     print('Invalid Request/ Not a mod')
@@ -456,7 +491,7 @@ class RoboBoboBot(irc.bot.SingleServerIRCBot):
                     print('Invalid Request/ Not a mod')
 
             # Save the commands for the next run
-            with open('cmds.pickle', 'wb') as f:
+            with open(self.name + '_cmds.pickle', 'wb') as f:
                 print('Saving Commands for Future Use...')
                 pickle.dump(self.cmds, f)
 
@@ -483,7 +518,11 @@ class RoboBoboBot(irc.bot.SingleServerIRCBot):
         #     self.repeatMsg(message, args[0])
 
 def main():
-    bot = RoboBoboBot()
+    if len(sys.argv) > 1:
+        name = sys.argv[1].lower()
+        bot = RoboBoboBot(name)
+    else:
+        bot = RoboBoboBot()
     bot.start()
 
 if __name__ == '__main__':

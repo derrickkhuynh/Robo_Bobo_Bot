@@ -8,16 +8,13 @@ import google_auth_oauthlib.flow
 import googleapiclient.discovery
 import googleapiclient.errors
 
+
+from helper import helper_Module as hp
+
 #scopes
 YT_SCOPES = ["https://www.googleapis.com/auth/youtube.force-ssl"]
 PLAYLIST_ID = "PLpKWYssZZaRkwTiqBCEytDUNySoREGTPf"
 
-#helper function to unsplit args
-def concatenateArgs(argsList, starting_index):
-    concatArgs = ""
-    for i in range(starting_index, len(argsList)):
-        concatArgs = concatArgs + argsList[i] + ' '
-    return concatArgs
 
 class YoutubePlaylistManager():
     def __init__(self):
@@ -32,16 +29,20 @@ class YoutubePlaylistManager():
         else:
             self.banned_songs = []
 
-        self.yt_authorization()
+        try:
+            self.yt_authorization()
+        except:
+            os.remove('ban_songs.pickle')
+            self.yt_authorization
         
 
     #conduct youtube authorization and return a youtube object to conduct calls with
     #the credentials are not stored as a class var (only local var) for safety and are deleted after initialization
     def yt_authorization(self):
         #check if a pickle exists with the token
-        if os.path.exists('yt_token.pickle'):
+        if os.path.exists('youtube/yt_token.pickle'):
             print('Loading Youtube Credentials From File...')
-            with open('yt_token.pickle', 'rb') as token:
+            with open('youtube/yt_token.pickle', 'rb') as token:
                 yt_credentials = pickle.load(token)
         else:
             yt_credentials = None
@@ -50,7 +51,11 @@ class YoutubePlaylistManager():
         if not yt_credentials or not yt_credentials.valid:
             if yt_credentials and yt_credentials.expired and yt_credentials.refresh_token:
                 print('Refreshing Youtube Access Token...')
-                yt_credentials.refresh(Request())
+                try:
+                    yt_credentials.refresh(Request())
+                except:
+                    os.remove('youtube/yt_token.pickle')
+                    yt_credentials.refresh(Request())
             else:
                 print('Fetching New Tokens...')
                 client_secrets_file = "client_id.json"
@@ -60,7 +65,7 @@ class YoutubePlaylistManager():
                 yt_credentials = flow.credentials
 
                 # Save the credentials for the next run
-                with open('yt_token.pickle', 'wb') as f:
+                with open('youtube/yt_token.pickle', 'wb') as f:
                     print('Saving Youtube Credentials for Future Use...')
                     pickle.dump(yt_credentials, f)
 
@@ -114,7 +119,7 @@ class YoutubePlaylistManager():
 
         #if more than 1 word song search, then it's not a link so search it
         elif len(req_song) > 2: #searching for song name
-            search_term = concatenateArgs(req_song, 1)
+            search_term = hp.concatenateArgs(req_song, 1)
             req_song_name, video_id = self.searchSong(search_term)
 
         else: #either has a link, song_id, or a single term search phrase
@@ -147,7 +152,7 @@ class YoutubePlaylistManager():
     #using song id, remove it from the playlist
     def deleteSong(self, req_del_args):
         self.updateSongList()                           #get an updated list of songs
-        search_term = concatenateArgs(req_del_args, 1) 
+        search_term = hp.concatenateArgs(req_del_args, 1) 
         del_song_name, _ = self.searchSong(search_term) #get the name of the video through search
         print('Trying to delete: ' + del_song_name)
         try: #if the song is in the list (no error caught), then delete it
@@ -161,7 +166,7 @@ class YoutubePlaylistManager():
 
     def banSong(self, req_song):
         self.updateSongList()                           #get an updated list of songs
-        search_term = concatenateArgs(req_song, 1)
+        search_term = hp.concatenateArgs(req_song, 1)
         ban_song_name, _ = self.searchSong(search_term) #get the name of the video through search
         if not(ban_song_name in self.banned_songs):      #if its not already in the banned list
             print('Banned: ' + ban_song_name)
